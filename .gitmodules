@@ -1,0 +1,9 @@
+[submodule "externals/ARCHDefs"]
+	path = externals/ARCHDefs
+	url = https://github.com/ralna/ARCHDefs.git
+[submodule "externals/SIFDecode"]
+	path = externals/SIFDecode
+	url = https://github.com/ralna/SIFDecode.git
+[submodule "externals/CUTEst"]
+	path = externals/CUTEst
+	url = https://github.com/ralna/CUTEst.git

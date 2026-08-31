@@ -1,0 +1,24 @@
+ Iniciando teste com n =          100
+   CPU min Time:    3.1000000000000000E-004  ms
+   GPU min Time:    2.6849999999999999E-002  ms
+ ----------------------------------------
+ Iniciando teste com n =         1000
+   CPU min Time:    3.1149999999999997E-003  ms
+   GPU min Time:    2.7511000000000001E-002  ms
+ ----------------------------------------
+ Iniciando teste com n =        10000
+   CPU min Time:    3.1448000000000004E-002  ms
+   GPU min Time:    2.7511000000000001E-002  ms
+ ----------------------------------------
+ Iniciando teste com n =       100000
+   CPU min Time:   0.31471600000000000       ms
+   GPU min Time:    3.2480000000000002E-002  ms
+ ----------------------------------------
+ Iniciando teste com n =      1000000
+   CPU min Time:    3.2200880000000001       ms
+   GPU min Time:    7.9116999999999993E-002  ms
+ ----------------------------------------
+ Iniciando teste com n =     10000000
+   CPU min Time:    32.485658999999998       ms
+   GPU min Time:   0.61900299999999997       ms
+ ----------------------------------------

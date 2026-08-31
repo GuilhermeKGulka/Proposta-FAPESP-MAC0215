@@ -1,0 +1,6 @@
+SuiteSparse/MM/*
+SuiteSparse/files/*
+
+# CUTEst build dirs
+externals/mycutest/
+externals/mastsif/

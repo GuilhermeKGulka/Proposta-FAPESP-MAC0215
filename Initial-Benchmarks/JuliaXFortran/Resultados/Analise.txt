@@ -1,0 +1,95 @@
+Nosso caso:
+
+-GPU usada: 9070XT
+  -Memoria: 16GB
+  -Largura de banda de memoria: 0.65 TB/s
+  -FP32: 48.7 TFLOPS
+  -FP64: 1.52 TFLOPS
+
+-GPU realiza: SpMV
+  -escala principalmente com nnz
+  -gargalos de performance:
+    *Intensidade de largura de banda/latencia de memoria, 
+      baixa intensidade aritmetica (~0.25 FLOPS/Byte)
+    ***Acesso irregular ao vetor hval causado por padrao de esparsidade, leva a cache miss
+       tornando o gargalo principal latencia de memoria, pela arquitetura de GPUs isso nao
+       ocorre da mesma forma, assim a GPU sofre menos com esparsidade irregular, assim seu 
+       gargalo se torna principalmente largura de banda de memoria.
+    *Desbalanceamento de carga, causado tambem pelo padrao de esparsidade
+  -estrategias de mehloria de performance:
+    *uso de implementacoes paralelas
+    *escolha de formatos de armazenamento distintos da matriz
+    *preprocessamento da matriz
+  !!Como para todas as multiplicacoes realizam acesso aleatorio a memoria, 
+    paralelizar a execucao em threads pode nao apresentar ganho de performance,
+    pois todas estarao em espera enquanto outras fazem transferencia de memoria.
+
+-Bibliotecas: hipSparse (rocSparse)
+
+-Speedup observado: 
+  -~20x para hnnz~2*10^6
+  -~3x para hnnz~2*10^5
+
+
+
+Dominique Orban:
+-GPU usada: NVIDIA H100 (??? irei supor 80GB)
+  -Memoria: 80GB
+  -Largura de banda de memoria: 2.04 TB/s
+  -FP32: 51.2 TFLOPS
+  -FP64: 25.6 TFLOPS
+
+-GPU realiza: Fatoracao LDLt esparsa
+  -gargalos de performance:
+    *mais complexos do que limitado por memoria ou intensidade aritmetica, 
+     limitado por uma arvore de dependencias algoritmicas, tem partes de
+     intensidade aritmetica e partes de muita leitura de memoria.
+  !!No paper o sistema eh regularizado para evitar a necessidade de pivoteamento numerico,
+    portanto o algoritmo deve passar mais tempo nas etapas de alta intensidade aritmetica.
+
+Bibliotecas: cuDSS
+
+Speedup Relatado:
+  -Comparacoes sao feitas entre MadNLP com Ma27 na CPU, e MadNCL-K2r na GPU com cuDSS
+   Problemas com sistemas lineares mal condicionados:
+   "in addition, MadNCL-K2r is significantly faster when using GPU-acceleration, with up to a 10x 
+   speed-up on the largest instances." o maior problema tinha dimensao:
+   (variaveis x restricoes) ~4*10^5 x 6*10^5.
+  -Comparacoes sao feitas entre MadNCL-K2r com Ma27 na CPU, e MadNCL-K2r na GPU com cuDSS
+   Problema OPF com dimensao ~7*10^5 x 10^6: Speedup de 17x
+
+
+
+
+Colegas Unicamp:
+-GPU usada: NVIDIA Tesla A100 40GB
+  -Memoria: 40GB
+  -Largura de banda de memoria: 1.56 TB/s
+  -FP32: 19.5 TFLOPS
+  -FP64: 9.75 TFLOPS
+
+-GPU realiza: reducao e projecao de vetor estilo MapReduce
+  -gargalos de performance:
+    *Intensidade de largura de banda de memoria, 
+      baixa intensidade aritmetica, pois le 4 doubles para realizar 
+      1 divisao, 1 subtracao, e 2 comparacoes.
+  !!Apesar de implementacoes em CPU usarem de alto controles logicos de fluxo,
+    devido a fixacao de variaveis, no paper a implementacao de GPU segue iteracoes
+    estilo jacobi, favorecendo paralelizacao, portanto os gargalos nao advem disso.
+    Contudo isso impacta no numero de iteracoes ate a convergencia
+  !!Apesar de tambem ser limitado por memoria, como o SpMV, aqui os acessos sao previsiveis,
+    logo nao ha tanto tempo de espera das threads, portanto a velocidade escala com o numero de threads,
+    e a barreira real seria quando a largura de banda de memoria for saturada
+
+"Biblioteca": CuArray da CUDA.jl
+
+Speedup Relatado:
+  -"As expected, employing multiple threads is not effective for small problems (n ≤ 10, 000)"
+  -"In our benchmarks, parallel execution becomes beneficial for n ≥ 100,000"
+  -"For large-scale problems (n ≥ 106), the GPU version is significantly faster, outperforming even the
+    CPU implementation running on all 48 threads. Notably, for the largest problems (n = 108), the
+    CPU version using a single thread and 48 threads is at least 151 and 6.8 times slower than the
+    GPU implementation, respectively."
+  -"GPU implementation achieves speedups of 45–186 times compared to its sequential CPU counterpart 
+   for problems with one million variables or more." i.e. GPU vs 1 thread, para o mesmo experimento
+   em CPU com 48 threads o speedup observado eh de 8.6, nao 186, e para n=10^8.

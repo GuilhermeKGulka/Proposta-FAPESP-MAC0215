@@ -1,0 +1,24 @@
+ Iniciando teste com n =          100  | Total NNZ =          100
+   CPU min Time:    3.2000000000000003E-004  ms
+   GPU min Time:    2.7070000000000000E-002  ms
+ ----------------------------------------
+ Iniciando teste com n =         1000  | Total NNZ =         1000
+   CPU min Time:    3.0750000000000000E-003  ms
+   GPU min Time:    2.7922000000000002E-002  ms
+ ----------------------------------------
+ Iniciando teste com n =        10000  | Total NNZ =        10000
+   CPU min Time:    3.1188000000000000E-002  ms
+   GPU min Time:    2.7390999999999999E-002  ms
+ ----------------------------------------
+ Iniciando teste com n =       100000  | Total NNZ =       100000
+   CPU min Time:   0.38194100000000003       ms
+   GPU min Time:    3.2721000000000000E-002  ms
+ ----------------------------------------
+ Iniciando teste com n =      1000000  | Total NNZ =      1000000
+   CPU min Time:    5.4461550000000001       ms
+   GPU min Time:    8.1881999999999996E-002  ms
+ ----------------------------------------
+ Iniciando teste com n =     10000000  | Total NNZ =     10000000
+   CPU min Time:    242.40089100000000       ms
+   GPU min Time:    1.2333970000000001       ms
+ ----------------------------------------
