@@ -1,4 +1,5 @@
-Dependencies
+Dependencies:
+
 This project relies on CUTEst (Constrained and Unconstrained Testing Environment with safe threads) for the optimization test problems. The source code for CUTEst and its structural dependencies (ARCHDefs, SIFDecode, and MASTSIF) are property of their respective authors and are downloaded automatically via git submodules.
 
 @article{GouldOrbanToint2015,
