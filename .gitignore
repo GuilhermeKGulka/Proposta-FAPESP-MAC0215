@@ -1,5 +1,7 @@
 SuiteSparse/MM/*
+!SuiteSparse/MM/.gitkeep
 SuiteSparse/files/*
+!SuiteSparse/files/.gitkeep
 
 # CUTEst build dirs
 externals/mycutest/
