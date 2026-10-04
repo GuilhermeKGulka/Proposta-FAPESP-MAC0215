@@ -1,0 +1,29 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "amd",
+      "displayName": "AMD (ROCm)",
+      "binaryDir": "${sourceDir}/build/amd",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "HIP_PLATFORM": "amd",
+        "CMAKE_PREFIX_PATH": "/opt/rocm"
+      }
+    },
+    {
+      "name": "nvidia",
+      "displayName": "NVIDIA (CUDA)",
+      "binaryDir": "${sourceDir}/build/nvidia",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "HIP_PLATFORM": "nvidia"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "amd", "configurePreset": "amd" },
+    { "name": "nvidia", "configurePreset": "nvidia" }
+  ]
+}

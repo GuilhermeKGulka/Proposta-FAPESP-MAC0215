@@ -6,3 +6,7 @@ SuiteSparse/files/*
 # CUTEst build dirs
 externals/mycutest/
 externals/mastsif/
+
+Generic-SpMV-API-Benchmarks/SuiteSparse-SpMV-test/build
+
+algencan-3.1.1/*

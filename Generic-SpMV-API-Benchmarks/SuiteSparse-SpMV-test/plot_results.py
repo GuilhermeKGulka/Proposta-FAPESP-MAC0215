@@ -1,12 +1,11 @@
 import pandas as pd
-import sys
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.lines import Line2D
 
 # 1. Carregamento do dataset
-df = pd.read_csv(sys.argv[1])
+df = pd.read_csv('results_cg_1_with_kinds.csv')
 
 # Identificação dinâmica das colunas
 nnz_col = [c for c in df.columns if c.lower() == 'nnz'][0]

@@ -3,14 +3,18 @@
 # Arquivo de resultados em CSV
 OUTPUT_CSV="results.csv"
 
+# Executavel a rodar (uso: BENCH=build/nvidia/benchmark_suitesparse ./run_benchmark.sh)
+BENCH="${BENCH:-./build/amd/benchmark_suitesparse}"
+
 # Diretorio contendo as subpastas dos grupos/matrizes
 MM_DIR="../../SuiteSparse/MM"
 
 # 1. Verifica se o executavel do benchmark existe
-if [ ! -f "./benchmark" ]; then
-    echo "Erro: Executavel './benchmark' nao encontrado."
+if [ ! -x "$BENCH" ]; then
+    echo "Erro: Executavel '$BENCH' nao encontrado."
     echo "Compile primeiro com:"
-    echo "  hipfc -O3 mmio.f90 benchmark_suitesparse.f90 -lhipsparse -o benchmark"
+    echo "  cmake --preset amd|nvidia && cmake --build --preset amd|nvidia"
+    echo "ou aponte BENCH=<caminho do executavel>"
     exit 1
 fi
 
@@ -22,7 +26,7 @@ fi
 
 # 3. Gerencia o cabecalho e inicializa o contador com base nas entradas existentes
 if [ ! -f "$OUTPUT_CSV" ] || [ ! -s "$OUTPUT_CSV" ]; then
-    echo "Problema,Dim,nnz,Density,niter,t_GPU_copy_ms,t_GPU_SpMV_total_ms,t_GPU_SpMV_avg_ms,t_CPU_SpMV_total_ms,t_CPU_SpMV_avg_ms,Speedup,Speedup_with_copy" > "$OUTPUT_CSV"
+    echo "Problema,Dim,nnz,Density,niter,t_GPU_copy_ms,t_GPU_SpMV_total_ms,t_GPU_SpMV_avg_ms,t_CPU_SpMV_total_ms,t_CPU_SpMV_avg_ms,Speedup,Speedup_with_copy,t_GPU_prep_ms" > "$OUTPUT_CSV"
     count=0
 else
     # Conta as linhas existentes subtraindo o cabecalho
@@ -67,7 +71,7 @@ find -L "$MM_DIR" -type f -name "*.mtx" | sort | while read -r matrix_file; do
         echo "----------------------------------------------------------"
         echo "[$count] Processando: $matrix_file"
         echo "----------------------------------------------------------"
-        ./benchmark_cg "$matrix_file"
+        "$BENCH" "$matrix_file"
     fi
 done
 

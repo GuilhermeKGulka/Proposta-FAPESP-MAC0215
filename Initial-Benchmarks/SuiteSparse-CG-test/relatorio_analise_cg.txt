@@ -1,0 +1,25 @@
+======================================================================
+ANÁLISE DE CONVERGÊNCIA GLOBAL (Arquivo: results_cg_1.csv | Total: 238)
+======================================================================
+Ambas Convergiram        :  156 ( 65.5%)
+Apenas CPU Convergiu     :    7 (  2.9%)
+Apenas GPU Convergiu     :    0 (  0.0%)
+Nenhuma Convergiu        :   75 ( 31.5%)
+
+======================================================================
+ESTATÍSTICAS DE SPEEDUP (Filtrado: Apenas 156 matrizes onde AMBAS convergiram)
+======================================================================
+Speedup Puro    - Média:  10.54x | Mediana:   6.40x | Máx:  93.10x
+Speedup c/ Cópia - Média:  10.42x | Mediana:   6.26x | Máx:  93.09x
+
+======================================================================
+DIFERENÇA RELATIVA DE ITERAÇÕES (%) [GPU vs CPU] (Filtrado: 156 matrizes)
+======================================================================
+Média do Acréscimo   :    27.69%
+Mediana do Acréscimo :    13.23%
+Mínimo (GPU fez menos):    -2.21%
+Máximo Desvio        :   704.75%
+Desvio Padrão        :    75.76%
+======================================================================
+
+[!] Painel gráfico atualizado exportado com sucesso como 'analise_completa_cg.png'.
