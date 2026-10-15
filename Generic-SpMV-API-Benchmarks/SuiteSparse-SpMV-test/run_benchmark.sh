@@ -26,7 +26,7 @@ fi
 
 # 3. Gerencia o cabecalho e inicializa o contador com base nas entradas existentes
 if [ ! -f "$OUTPUT_CSV" ] || [ ! -s "$OUTPUT_CSV" ]; then
-    echo "Problema,Dim,nnz,Density,niter,t_GPU_copy_ms,t_GPU_SpMV_total_ms,t_GPU_SpMV_avg_ms,t_CPU_SpMV_total_ms,t_CPU_SpMV_avg_ms,Speedup,Speedup_with_copy,t_GPU_prep_ms" > "$OUTPUT_CSV"
+    echo "Problema,Dim,nnz,Density,niter,t_GPU_copy_ms,t_GPU_SpMV_total_ms,t_GPU_SpMV_avg_ms,t_CPU_SpMV_total_ms,t_CPU_SpMV_avg_ms,Speedup,Speedup_with_copy,t_GPU_prep_ms,Max_err_rel" > "$OUTPUT_CSV"
     count=0
 else
     # Conta as linhas existentes subtraindo o cabecalho

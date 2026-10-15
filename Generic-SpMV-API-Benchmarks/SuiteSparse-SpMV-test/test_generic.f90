@@ -25,7 +25,7 @@ contains
     type(c_ptr) :: handle, mat, vx, vy, d_rp, d_ci, d_va, d_x, d_y, buf
     integer(c_size_t) :: bsz
     integer(c_int) :: alg, st_buf, st_pre, st_mv
-    integer :: i
+    integer :: i, variante
 
     rp = [0, 3, 5, 8] + base
     ci = [0, 1, 3, 1, 2, 0, 2, 3] + base
@@ -51,26 +51,33 @@ contains
     call hs_check(hs_create_dnvec(vy, 3_c_int64_t, d_y, HS_R_64F), "CreateDnVec y")
 
     do alg = 0, 4
-      y = 0.0d0
-      call hipcheck(hipMemcpy(d_y, c_loc(y), 24_c_size_t, hipMemcpyHostToDevice))
-      st_pre = -1
-      st_mv = -1
-      bsz = 0
-      st_buf = hs_spmv_buffer_size(handle, HS_OP_N, c_loc(alpha), mat, vx, c_loc(beta), vy, &
-                                   HS_R_64F, alg, bsz)
-      if (st_buf == 0) then
-        ! buffer folgado (>= 1 MiB) para descartar problema de tamanho
-        call hipcheck(hipMalloc(buf, max(bsz, 1048576_c_size_t)))
-        st_pre = hs_spmv_preprocess(handle, HS_OP_N, c_loc(alpha), mat, vx, c_loc(beta), vy, &
-                                    HS_R_64F, alg, buf)
-        st_mv = hs_spmv(handle, HS_OP_N, c_loc(alpha), mat, vx, c_loc(beta), vy, &
-                        HS_R_64F, alg, buf)
-        call hipcheck(hipMemcpy(c_loc(y), d_y, 24_c_size_t, hipMemcpyDeviceToHost))
-        call hipcheck(hipFree(buf))
-      end if
-      write(*,'(A,I0,A,I0,A,I0,A,I0,A,I0,A,I0,A,3F7.1)') "base ", base, " alg ", alg, &
-            ": bufsize=", bsz, " | bufferSize=", st_buf, " preprocess=", st_pre, &
-            " spmv=", st_mv, " | y=", y
+      do variante = 0, 1
+        y = 0.0d0
+        call hipcheck(hipMemcpy(d_y, c_loc(y), 24_c_size_t, hipMemcpyHostToDevice))
+        st_pre = -1
+        st_mv = -1
+        bsz = 0
+        st_buf = hs_spmv_buffer_size(handle, HS_OP_N, c_loc(alpha), mat, vx, c_loc(beta), vy, &
+                                     HS_R_64F, alg, bsz)
+        if (st_buf == 0) then
+          if (variante == 0) then
+            call hs_alloc_buffer(buf, bsz)      ! regra: nulo se bsz == 0
+          else
+            buf = c_null_ptr                    ! forca buffer NAO nulo (reproduz o erro)
+            call hipcheck(hipMalloc(buf, max(bsz, 4096_c_size_t)))
+          end if
+          st_pre = hs_spmv_preprocess(handle, HS_OP_N, c_loc(alpha), mat, vx, c_loc(beta), vy, &
+                                      HS_R_64F, alg, buf)
+          st_mv = hs_spmv(handle, HS_OP_N, c_loc(alpha), mat, vx, c_loc(beta), vy, &
+                          HS_R_64F, alg, buf)
+          call hipcheck(hipMemcpy(c_loc(y), d_y, 24_c_size_t, hipMemcpyDeviceToHost))
+          call hs_free_buffer(buf)
+        end if
+        write(*,'(A,I0,A,I0,A,A,I0,A,I0,A,I0,A,I0,A,3F7.1)') "base ", base, " alg ", alg, &
+              merge(" buffer=regra    ", " buffer=nao-nulo ", variante == 0), &
+              "bufsize=", bsz, " | bufferSize=", st_buf, " preprocess=", st_pre, &
+              " spmv=", st_mv, " | y=", y
+      end do
     end do
 
     call hs_check(hs_destroy_spmat(mat), "DestroySpMat")

@@ -28,6 +28,8 @@ program benchmark_suitesparse
   integer(c_size_t) :: buf_size
   real(c_double), target :: alpha_s, beta_s
   logical :: do_prep
+  integer :: nbad, n_unsorted, n_dup, n_nonfinite
+  real(8) :: sabs, erri
   integer(c_int) :: st
   character(len=16) :: arg2
   type(c_ptr) :: d_row_ptr = c_null_ptr, d_col = c_null_ptr, d_val = c_null_ptr
@@ -119,6 +121,17 @@ program benchmark_suitesparse
     end if
   end do
   close(unit)
+
+  ! VALIDACAO DA ENTRADA: o codigo assume matriz quadrada com indices em [1, n].
+  ! Fora disso o counting sort escreveria alem dos vetores (CSR corrompido).
+  if (nnz_total > 0) then
+    if (m /= n .or. minval(coo_row(1:nnz_total)) < 1 .or. maxval(coo_row(1:nnz_total)) > n &
+        .or. minval(coo_col(1:nnz_total)) < 1 .or. maxval(coo_col(1:nnz_total)) > n) then
+      write(*,'(A,A,A,I0,A,I0,A)') "IGNORADA: ", trim(problem_name), &
+            ": nao quadrada ou indices fora de [1,n] (m=", m, ", n=", n, ")"
+      stop 2
+    end if
+  end if
   
   ! CONVERTER COO PARA CSR (Via Counting Sort O(NNZ))
   allocate(hrow_ptr(n+1), hcol(nnz_total), hval(nnz_total))
@@ -144,9 +157,29 @@ program benchmark_suitesparse
   end do
   
   deallocate(coo_row, coo_col, coo_val, row_counts, cur_ptr)
+
+  ! DIAGNOSTICO DO CSR (so avisa): colunas fora de ordem, duplicadas, valores nao finitos
+  n_unsorted = 0
+  n_dup = 0
+  n_nonfinite = 0
+  do i = 1, n
+    do k = hrow_ptr(i), hrow_ptr(i+1) - 1
+      if (.not. (abs(hval(k)) <= huge(1.0d0))) n_nonfinite = n_nonfinite + 1
+      if (k > hrow_ptr(i)) then
+        if (hcol(k) < hcol(k-1)) n_unsorted = n_unsorted + 1
+        if (hcol(k) == hcol(k-1)) n_dup = n_dup + 1
+      end if
+    end do
+  end do
+  if (n_unsorted + n_dup + n_nonfinite > 0) write(*,'(A,A,A,I0,A,I0,A,I0)') &
+        "AVISO CSR ", trim(problem_name), ": colunas fora de ordem=", n_unsorted, &
+        " duplicadas=", n_dup, " valores nao finitos=", n_nonfinite
   
   ! Vetores de entrada/saida
-  h_x = 1.0d0
+  ! x nao uniforme: assim a checagem GPU vs CPU tambem detecta erro de indice de coluna
+  do i = 1, n
+    h_x(i) = 1.0d0 + real(mod(i, 17), 8) / 17.0d0
+  end do
   h_y = 0.0d0
   
   ! SETUP HIPSPARSE E COPIA DE MEMORIA
@@ -187,7 +220,7 @@ program benchmark_suitesparse
   ! BUFFER EXTERNO
   call hs_check(hs_spmv_buffer_size(handle, HS_OP_N, c_loc(alpha_s), mat_a, vec_x, &
                 c_loc(beta_s), vec_y, HS_R_64F, HS_SPMV_ALG_DEFAULT, buf_size), "SpMV_bufferSize")
-  call hipcheck(hipMalloc(d_buf, max(buf_size, 1_c_size_t)))
+  call hs_alloc_buffer(d_buf, buf_size)   ! nulo se buf_size == 0
 
   ! PREPROCESS (analise da matriz, uma vez; cronometrado a parte)
   t_gpu_prep = 0.0d0
@@ -237,10 +270,28 @@ program benchmark_suitesparse
   call system_clock(t_end)
   t_cpu_spmv = real(t_end - t_start, 8) / real(rate, 8) * 1000.0d0
   
-  ! CHECAGEM DE CORRETUDE (GPU vs CPU), so aviso na tela
-  max_err = maxval(abs(h_y - h_yg)) / max(maxval(abs(h_y)), tiny(1.0d0))
-  if (max_err > 1.0d-8) write(*,'(A,A,A,ES10.3)') "AVISO: ", trim(problem_name), &
-        " erro relativo GPU vs CPU = ", max_err
+  ! CHECAGEM DE CORRETUDE (GPU vs CPU): erro por linha relativo a sum_j |a_ij x_j|,
+  ! a escala natural do arredondamento (robusto a cancelamento, ex.: Laplacianos).
+  max_err = 0.0d0
+  nbad = 0
+  do i = 1, n
+    sabs = 0.0d0
+    do k = hrow_ptr(i), hrow_ptr(i+1) - 1
+      sabs = sabs + abs(hval(k) * h_x(hcol(k)))
+    end do
+    if (sabs > 0.0d0) then
+      erri = abs(h_y(i) - h_yg(i)) / sabs
+      if (erri /= erri) erri = huge(1.0d0)          ! NaN conta como erro
+      max_err = max(max_err, erri)
+      if (erri > 1.0d-10) then
+        nbad = nbad + 1
+        if (nbad <= 5) write(*,'(A,I0,A,ES12.5,A,ES12.5,A,I0)') "  linha ", i, &
+              ": cpu=", h_y(i), " gpu=", h_yg(i), " nnz_na_linha=", hrow_ptr(i+1) - hrow_ptr(i)
+      end if
+    end if
+  end do
+  if (nbad > 0) write(*,'(A,A,A,I0,A,I0,A,ES10.3)') "AVISO: ", trim(problem_name), &
+        ": linhas divergentes ", nbad, " de ", n, "  erro max = ", max_err
 
   ! CALCULO DAS NOVAS METRICAS
   t_gpu_avg = t_gpu_spmv / real(niter, 8)
@@ -251,8 +302,8 @@ program benchmark_suitesparse
   
   ! ESCRITA NA TABELA CSV
   open(unit=20, file='results.csv', status='unknown', position='append', action='write')
-  write(20, '(A, ",", I0, ",", I0, ",", ES12.5, ",", I0, ",", ES12.5, ",", ES12.5, ",", ES12.5, ",", ES12.5, ",", ES12.5, ",", ES12.5, ",", ES12.5, ",", ES12.5)') &
-        trim(problem_name), n, nnz_total, density, niter, t_gpu_copy, t_gpu_spmv, t_gpu_avg, t_cpu_spmv, t_cpu_avg, speedup, speedup_with_copy, t_gpu_prep
+  write(20, '(A, ",", I0, ",", I0, ",", ES12.5, ",", I0, ",", ES12.5, ",", ES12.5, ",", ES12.5, ",", ES12.5, ",", ES12.5, ",", ES12.5, ",", ES12.5, ",", ES12.5, ",", ES12.5)') &
+        trim(problem_name), n, nnz_total, density, niter, t_gpu_copy, t_gpu_spmv, t_gpu_avg, t_cpu_spmv, t_cpu_avg, speedup, speedup_with_copy, t_gpu_prep, max_err
   close(20)
   
   ! Limpeza
@@ -261,7 +312,7 @@ program benchmark_suitesparse
   call hipcheck(hipFree(d_val))
   call hipcheck(hipFree(d_x))
   call hipcheck(hipFree(d_y))
-  call hipcheck(hipFree(d_buf))
+  call hs_free_buffer(d_buf)
   call hs_check(hs_destroy_spmat(mat_a), "DestroySpMat")
   call hs_check(hs_destroy_dnvec(vec_x), "DestroyDnVec x")
   call hs_check(hs_destroy_dnvec(vec_y), "DestroyDnVec y")

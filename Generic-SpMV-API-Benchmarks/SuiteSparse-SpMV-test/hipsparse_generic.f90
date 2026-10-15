@@ -7,10 +7,11 @@ module hipsparse_generic
   use iso_c_binding
   use hipfort
   use hipfort_hipsparse
+  use hipfort_check
   implicit none
   private
   public :: HS_OP_N, HS_INDEX_32I, HS_BASE_ZERO, HS_BASE_ONE, HS_R_32F, HS_R_64F
-  public :: HS_SPMV_ALG_DEFAULT, hs_check
+  public :: HS_SPMV_ALG_DEFAULT, hs_check, hs_alloc_buffer, hs_free_buffer
   public :: hs_create_csr, hs_create_dnvec, hs_destroy_spmat, hs_destroy_dnvec
   public :: hs_spmv_buffer_size, hs_spmv_preprocess, hs_spmv
 
@@ -85,6 +86,21 @@ module hipsparse_generic
   end interface
 
 contains
+
+  ! Regra do hipSPARSE: se bufferSize devolve 0, o buffer externo DEVE ser nulo
+  ! (um ponteiro alocado resulta em HIPSPARSE_STATUS_INVALID_VALUE).
+  subroutine hs_alloc_buffer(buf, nbytes)
+    type(c_ptr), intent(out) :: buf
+    integer(c_size_t), intent(in) :: nbytes
+    buf = c_null_ptr
+    if (nbytes > 0_c_size_t) call hipcheck(hipMalloc(buf, nbytes))
+  end subroutine hs_alloc_buffer
+
+  subroutine hs_free_buffer(buf)
+    type(c_ptr), intent(inout) :: buf
+    if (c_associated(buf)) call hipcheck(hipFree(buf))
+    buf = c_null_ptr
+  end subroutine hs_free_buffer
 
   ! Aborta dizendo QUAL chamada falhou
   subroutine hs_check(stat, label)
