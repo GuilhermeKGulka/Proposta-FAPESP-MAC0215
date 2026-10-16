@@ -1,5 +1,12 @@
 SuiteSparse/MM/*
 !SuiteSparse/MM/.gitkeep
+!SuiteSparse/MM/Andrews
+!SuiteSparse/MM/Chem97ZtZ
+!SuiteSparse/MM/G2_circuit
+!SuiteSparse/MM/mhd3200b
+!SuiteSparse/MM/mhd4800b
+!SuiteSparse/MM/mhdb416
+!SuiteSparse/MM/Pres-Poisson
 SuiteSparse/files/*
 !SuiteSparse/files/.gitkeep
 
@@ -8,5 +15,6 @@ externals/mycutest/
 externals/mastsif/
 
 Generic-SpMV-API-Benchmarks/SuiteSparse-SpMV-test/build
+Generic-SpMV-API-Benchmarks/SuiteSparse-CG-test/build
 
 algencan-3.1.1/*
