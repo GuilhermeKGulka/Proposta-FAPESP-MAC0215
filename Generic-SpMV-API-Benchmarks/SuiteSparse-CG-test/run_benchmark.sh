@@ -9,6 +9,19 @@ BENCH="${BENCH:-./build/amd/benchmark_cg}"
 # Diretorio contendo as subpastas dos grupos/matrizes
 MM_DIR="../../SuiteSparse/MM"
 
+# Descobre o executavel: BENCH tem prioridade; se nao, tenta build/nvidia
+# e depois build/amd (nessa ordem, porque nvidia costuma ser o caso testado).
+if [ -z "${BENCH:-}" ]; then
+    for cand in build/nvidia/benchmark_cg\
+                build/amd/benchmark_cg; do
+        if [ -x "$cand" ]; then
+            BENCH="$cand"
+            break
+        fi
+    done
+fi
+BENCH="${BENCH:-./build/amd/benchmark_suitesparse}"   # fallback p/ mensagem
+
 # 1. Verifica se o executavel do benchmark existe
 if [ ! -x "$BENCH" ]; then
     echo "Erro: Executavel '$BENCH' nao encontrado."
