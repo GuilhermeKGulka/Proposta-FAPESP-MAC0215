@@ -3,14 +3,10 @@
 # Arquivo de resultados em CSV
 OUTPUT_CSV="results.csv"
 
-# Executavel a rodar (uso: BENCH=build/nvidia/benchmark_suitesparse ./run_benchmark.sh)
-BENCH="${BENCH:-./build/amd/benchmark_suitesparse}"
-
 # Diretorio contendo as subpastas dos grupos/matrizes
 MM_DIR="../../SuiteSparse/MM"
 
-# Descobre o executavel: BENCH tem prioridade; se nao, tenta build/nvidia
-# e depois build/amd (nessa ordem, porque nvidia costuma ser o caso testado).
+# Descobre o executavel:
 if [ -z "${BENCH:-}" ]; then
     for cand in build/nvidia/benchmark_suitesparse \
                 build/amd/benchmark_suitesparse; do
@@ -20,7 +16,7 @@ if [ -z "${BENCH:-}" ]; then
         fi
     done
 fi
-BENCH="${BENCH:-./build/amd/benchmark_suitesparse}"   # fallback p/ mensagem
+BENCH="${BENCH:-./build/\{plataforma\}/benchmark_suitesparse}"   # fallback p/ mensagem
 
 # 1. Verifica se o executavel do benchmark existe
 if [ ! -x "$BENCH" ]; then
