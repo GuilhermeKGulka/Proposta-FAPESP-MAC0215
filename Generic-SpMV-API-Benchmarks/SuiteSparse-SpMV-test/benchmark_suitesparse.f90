@@ -302,9 +302,12 @@ program benchmark_suitesparse
   
   ! ESCRITA NA TABELA CSV
   open(unit=20, file='results.csv', status='unknown', position='append', action='write')
-  write(20, '(A, ",", I0, ",", I0, ",", ES12.5, ",", I0, ",", ES12.5, ",", ES12.5, ",", ES12.5, ",", ES12.5, ",", ES12.5, ",", ES12.5, ",", ES12.5, ",", ES12.5, ",", ES12.5)') &
-        trim(problem_name), n, nnz_total, density, niter, t_gpu_copy, t_gpu_spmv, t_gpu_avg, t_cpu_spmv, t_cpu_avg, speedup, speedup_with_copy, t_gpu_prep, max_err
-  close(20)
+  write(20, '(A, ",", I0, ",", I0, ",", ES12.5, ",", I0, ",", ES12.5, ",", ES12.5, ' // &
+            & '",", ES12.5, ",", ES12.5, ",", ES12.5, ",", ES12.5, ",", ES12.5, ' // &
+            & '",", ES12.5, ",", ES12.5, ",", ES12.5)')                           &
+        trim(problem_name), n, nnz_total, density, niter, t_gpu_copy,             &
+        t_gpu_spmv, t_gpu_avg, t_cpu_spmv, t_cpu_avg, speedup,                    &
+        speedup_with_copy, t_gpu_prep, max_err
   
   ! Limpeza
   call hipcheck(hipFree(d_row_ptr))
