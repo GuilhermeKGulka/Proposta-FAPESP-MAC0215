@@ -16,5 +16,6 @@ externals/mastsif/
 
 Generic-SpMV-API-Benchmarks/SuiteSparse-SpMV-test/build
 Generic-SpMV-API-Benchmarks/SuiteSparse-CG-test/build
+Generic-SpMV-API-Benchmarks/CUTEst-Newton-CG-test/build
 
 algencan-3.1.1/*
