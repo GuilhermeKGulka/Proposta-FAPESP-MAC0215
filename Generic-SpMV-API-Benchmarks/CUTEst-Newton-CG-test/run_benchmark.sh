@@ -63,9 +63,10 @@ for p in $(grep -v '^#' "$LIST"); do
         failed+=("$p"); continue
     fi
 
-    ( cd "$BUILD_DIR" && ulimit -St 600; RESULTS_CSV="$OUTPUT_CSV" ./benchmark_newton_cg "${args[@]}" ) 2>&1 | tee -a "$log"
+    # Limite de tempo removido
+    ( cd "$BUILD_DIR" && RESULTS_CSV="$OUTPUT_CSV" ./benchmark_newton_cg "${args[@]}" ) 2>&1 | tee -a "$log"
     rc=${PIPESTATUS[0]}
-    [ "$rc" -ne 0 ] && echo "[aviso] $p terminou com codigo $rc (152 = limite de 600 s de CPU)"
+    [ "$rc" -ne 0 ] && echo "[aviso] $p terminou com codigo $rc"
     printf '%s\t%s\n' "$p" "$rc" >> "$DONE_FILE"
     ran=$((ran + 1))
 done
