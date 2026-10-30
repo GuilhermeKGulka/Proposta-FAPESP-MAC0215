@@ -5,6 +5,8 @@ Le results_newton_cg.csv e gera PNGs + resumo de texto.
 """
 import warnings
 import glob
+import os
+import argparse
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -14,11 +16,31 @@ warnings.filterwarnings('ignore')
 plt.rcParams.update({'figure.dpi': 150, 'axes.grid': True,
                      'grid.alpha': 0.3, 'font.size': 10})
 
+# ---------------------------------------------------------------------------
+# Argumentos
+# ---------------------------------------------------------------------------
+parser = argparse.ArgumentParser(description="Gera graficos do benchmark Newton-CG.")
+parser.add_argument("outdir", nargs="?", default="plots",
+                    help="Diretorio de saida (e prefixo dos arquivos). Default: plots")
+parser.add_argument("--csv", default="results_newton_cg.csv",
+                    help="Caminho do CSV de entrada. Default: results_newton_cg.csv")
+args = parser.parse_args()
+
+outdir = args.outdir
+prefix = os.path.basename(os.path.normpath(outdir))
+os.makedirs(outdir, exist_ok=True)
+
+def save_plot(name):
+    filename = f"{prefix}_{name}.png"
+    path = os.path.join(outdir, filename)
+    plt.savefig(path, bbox_inches='tight')
+    plt.close()
+
 
 # ---------------------------------------------------------------------------
 # Carga
 # ---------------------------------------------------------------------------
-df = pd.read_csv('results_newton_cg.csv')
+df = pd.read_csv(args.csv)
 for c in df.columns:
     if c != 'Problem':
         df[c] = pd.to_numeric(df[c], errors='coerce')
@@ -71,7 +93,8 @@ ax.set(xscale='log', yscale='log',
        ylabel='Speedup CPU/GPU (log)',
        title='Speedup em funcao do tamanho: ganho cresce com a Hessiana')
 ax.legend(loc='upper left', framealpha=0.95)
-plt.tight_layout(); plt.savefig('plot1_speedup_vs_nnz.png'); plt.close()
+plt.tight_layout()
+save_plot('plot1_speedup_vs_nnz')
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +115,8 @@ ax.axvline(1, color='gray', linestyle=':', linewidth=0.6)
 cbar = plt.colorbar(sc, ax=ax)
 cbar.set_label('Fracao do tempo da CPU em CG')
 ax.legend(loc='upper left')
-plt.tight_layout(); plt.savefig('plot2_amdahl.png'); plt.close()
+plt.tight_layout()
+save_plot('plot2_amdahl')
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +130,8 @@ ax.set(xscale='log', yscale='log',
        xlabel='NNZ (log)', ylabel='% tempo da CPU em CG (log)',
        title='A partir de qual NNZ o CG domina o tempo da CPU')
 ax.legend()
-plt.tight_layout(); plt.savefig('plot3_cg_fraction.png'); plt.close()
+plt.tight_layout()
+save_plot('plot3_cg_fraction')
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +148,8 @@ ax.set(xscale='log', yscale='log', xlim=lims, ylim=lims,
        ylabel='Tempo nao-CG na execucao GPU (ms)',
        title='Trabalho serializado (CUTEst) e igual nos dois backends')
 ax.legend()
-plt.tight_layout(); plt.savefig('plot4_host_time.png'); plt.close()
+plt.tight_layout()
+save_plot('plot4_host_time')
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +176,8 @@ axes[1].axvline(1, color='k', linestyle='--', linewidth=1)
 axes[1].set(xscale='log', xlabel='Speedup (log)',
             ylabel='Fracao acumulada', title='CDF de speedup')
 axes[1].legend(loc='lower right')
-plt.tight_layout(); plt.savefig('plot5_distribution.png'); plt.close()
+plt.tight_layout()
+save_plot('plot5_distribution')
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +204,8 @@ axes[1].set(xscale='log', yscale='log', xlim=lims, ylim=lims,
             xlabel='||grad|| final — CPU', ylabel='||grad|| final — GPU',
             title='Norma do gradiente final')
 axes[1].legend()
-plt.tight_layout(); plt.savefig('plot6_correctness.png'); plt.close()
+plt.tight_layout()
+save_plot('plot6_correctness')
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +229,8 @@ axes[1].set(xscale='log', yscale='log',
             ylabel='Speedup CG',
             title='Mais iteracoes = melhor amortizacao do overhead')
 cbar = plt.colorbar(sc, ax=axes[1]); cbar.set_label('NNZ')
-plt.tight_layout(); plt.savefig('plot7_cg_behavior.png'); plt.close()
+plt.tight_layout()
+save_plot('plot7_cg_behavior')
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +262,6 @@ print(f"  Erro log medio:   {err.mean():.3f}")
 print(f"  Erro log maximo:  {err.max():.3f}")
 print(f"  Acuracia (erro<20%): {(err < np.log(1.2)).mean()*100:.1f}%")
 
-print("\nPlots gerados:")
-for f in sorted(glob.glob('plot*.png')):
+print(f"\nPlots gerados em '{outdir}':")
+for f in sorted(glob.glob(os.path.join(outdir, '*.png'))):
     print(f"  {f}")
