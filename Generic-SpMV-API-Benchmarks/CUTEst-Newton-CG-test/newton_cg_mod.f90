@@ -21,6 +21,8 @@ module newton_cg_mod
     integer :: cg_fails         = 0
     integer :: first_cg_fail    = -1
     integer :: last_cg_iter     = 0
+    integer :: total_cg_iter    = 0
+    real(8) :: avg_cg_iter      = 0.0d0
     real(8) :: cg_time_ms       = 0.0d0
     real(8) :: total_time_ms    = 0.0d0
     real(8) :: avg_iter_time_ms = 0.0d0
@@ -190,6 +192,7 @@ contains
                          real(tc1 - tc0, 8) / real(trate, 8) * 1.0d3
 
       stats%last_cg_iter = cg_iter
+      stats%total_cg_iter = stats%total_cg_iter + cg_iter
       if (istop_cg == 1) then
         stats%cg_fails = stats%cg_fails + 1
         if (stats%first_cg_fail < 0) stats%first_cg_fail = iter + 1
@@ -203,6 +206,7 @@ contains
     stats%total_time_ms = real(t1 - t0, 8) / real(trate, 8) * 1000.0d0
     if (stats%newton_iter > 0) &
       stats%avg_iter_time_ms = stats%total_time_ms / real(stats%newton_iter, 8)
+      stats%avg_cg_iter = real(stats%total_cg_iter, 8) / real(stats%newton_iter, 8)
 
     deallocate(g, d, hval, hrow_ptr, hcol)
     deallocate(hval_coo, hrow_coo, hcol_coo, row_counts, cur_ptr)
@@ -299,6 +303,7 @@ contains
                          real(tc1 - tc0, 8) / real(trate, 8) * 1.0d3
 
       stats%last_cg_iter = cg_iter
+      stats%total_cg_iter = stats%total_cg_iter + cg_iter
       if (istop_cg == 1) then
         stats%cg_fails = stats%cg_fails + 1
         if (stats%first_cg_fail < 0) stats%first_cg_fail = iter + 1
@@ -314,6 +319,7 @@ contains
     stats%total_time_ms = real(t1 - t0, 8) / real(trate, 8) * 1000.0d0
     if (stats%newton_iter > 0) &
       stats%avg_iter_time_ms = stats%total_time_ms / real(stats%newton_iter, 8)
+      stats%avg_cg_iter = real(stats%total_cg_iter, 8) / real(stats%newton_iter, 8)
 
     deallocate(g, d, hval, hrow_ptr, hcol)
     deallocate(hval_coo, hrow_coo, hcol_coo, row_counts, cur_ptr)

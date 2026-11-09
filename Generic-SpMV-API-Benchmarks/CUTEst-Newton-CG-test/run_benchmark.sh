@@ -27,7 +27,7 @@ if [ ! -f "$LIST" ]; then
 fi
 
 if [ ! -f "$OUTPUT_CSV" ] || [ ! -s "$OUTPUT_CSV" ]; then
-    echo "Problem,N,NNZ,Density,NI_CPU,NI_GPU,fcnt_CPU,fcnt_GPU,gcnt_CPU,gcnt_GPU,hcnt_CPU,hcnt_GPU,istop_CPU,istop_GPU,cg_fails_CPU,cg_fails_GPU,first_cg_fail_CPU,first_cg_fail_GPU,last_cg_iter_CPU,last_cg_iter_GPU,t_total_CPU_ms,t_total_GPU_ms,t_avg_CPU_ms,t_avg_GPU_ms,t_cg_CPU_ms,t_cg_GPU_ms,Speedup,Speedup_CG,Sol_Diff,t_GPU_prep_ms,Gnorm_CPU,Gnorm_GPU" > "$OUTPUT_CSV"
+    echo "Problem,N,NNZ,Density,NI_CPU,NI_GPU,fcnt_CPU,fcnt_GPU,gcnt_CPU,gcnt_GPU,hcnt_CPU,hcnt_GPU,istop_CPU,istop_GPU,cg_fails_CPU,cg_fails_GPU,first_cg_fail_CPU,first_cg_fail_GPU,last_cg_iter_CPU,last_cg_iter_GPU,avg_cg_iter_CPU,avg_cg_iter_GPU,t_total_CPU_ms,t_total_GPU_ms,t_avg_CPU_ms,t_avg_GPU_ms,t_cg_CPU_ms,t_cg_GPU_ms,Speedup,Speedup_CG,Sol_Diff,t_GPU_prep_ms,Gnorm_CPU,Gnorm_GPU" > "$OUTPUT_CSV"
 fi
 mkdir -p "$BUILD_DIR/logs"
 touch "$DONE_FILE"

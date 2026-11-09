@@ -20,3 +20,5 @@ Generic-SpMV-API-Benchmarks/CUTEst-Newton-CG-test/build
 
 algencan-3.1.1/*
 Initial-Benchmarks/SuiteSparse-CG-test/hipfort/
+
+Generic-SpMV-API-Benchmarks/CUTEst-Newton-CG-test/plots*

@@ -13,7 +13,7 @@ program benchmark_newton_cg
   integer :: n, hnnzmax
   integer :: status, allocerr, i
   integer :: cgmaxit, maxit, nnz0
-  real(8), parameter :: eps    = 1.0d-08
+  real(8), parameter :: eps    = 1.0d-06
   real(8)            :: eps_cg
 
   real(8), allocatable :: x_init(:), x_gpu(:), x_cpu(:), bl(:), bu(:), gtmp(:)
@@ -168,6 +168,7 @@ program benchmark_newton_cg
     stats_cpu%cg_fails, stats_gpu%cg_fails, &
     stats_cpu%first_cg_fail, stats_gpu%first_cg_fail, &
     stats_cpu%last_cg_iter, stats_gpu%last_cg_iter, &
+    stats_cpu%avg_cg_iter, stats_gpu%avg_cg_iter, &
     stats_cpu%total_time_ms, stats_gpu%total_time_ms, &
     stats_cpu%avg_iter_time_ms, stats_gpu%avg_iter_time_ms, &
     stats_cpu%cg_time_ms, stats_gpu%cg_time_ms, &

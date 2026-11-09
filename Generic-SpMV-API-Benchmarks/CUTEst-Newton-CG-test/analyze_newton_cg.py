@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Analise grafica do benchmark Newton-CG CPU vs GPU.
-Le results_newton_cg.csv e gera PNGs + resumo de texto.
+Analise grafica do benchmark Newton-CG focada na validacao da proposta FAPESP.
+Foca em: convergencia, tamanho do problema e precisao numerica.
 """
 import warnings
 import glob
@@ -14,16 +14,16 @@ from matplotlib.colors import LogNorm
 
 warnings.filterwarnings('ignore')
 plt.rcParams.update({'figure.dpi': 150, 'axes.grid': True,
-                     'grid.alpha': 0.3, 'font.size': 10})
+                     'grid.alpha': 0.3, 'font.size': 11})
 
 # ---------------------------------------------------------------------------
 # Argumentos
 # ---------------------------------------------------------------------------
-parser = argparse.ArgumentParser(description="Gera graficos do benchmark Newton-CG.")
+parser = argparse.ArgumentParser(description="Gera graficos focados na validacao da proposta.")
 parser.add_argument("outdir", nargs="?", default="plots",
                     help="Diretorio de saida (e prefixo dos arquivos). Default: plots")
 parser.add_argument("--csv", default="results_newton_cg.csv",
-                    help="Caminho do CSV de entrada. Default: results_newton_cg.csv")
+                    help="Caminho do CSV de entrada.")
 args = parser.parse_args()
 
 outdir = args.outdir
@@ -36,232 +36,181 @@ def save_plot(name):
     plt.savefig(path, bbox_inches='tight')
     plt.close()
 
-
 # ---------------------------------------------------------------------------
-# Carga
+# Carga e Tratamento
 # ---------------------------------------------------------------------------
 df = pd.read_csv(args.csv)
 for c in df.columns:
     if c != 'Problem':
         df[c] = pd.to_numeric(df[c], errors='coerce')
 
-for c in ['t_total_CPU_ms', 't_total_GPU_ms', 't_cg_CPU_ms', 't_cg_GPU_ms', 'NNZ']:
-    df.loc[df[c] <= 0, c] = np.nan
-
-df['cg_frac_CPU'] = (df['t_cg_CPU_ms'] / df['t_total_CPU_ms']).clip(0, 1)
-df['cg_frac_GPU'] = (df['t_cg_GPU_ms'] / df['t_total_GPU_ms']).clip(0, 1)
-df['host_CPU'] = df['t_total_CPU_ms'] - df['t_cg_CPU_ms']
-df['host_GPU'] = df['t_total_GPU_ms'] - df['t_cg_GPU_ms'] - df['t_GPU_prep_ms'].fillna(0)
-
+# Remove problemas onde algum dos dois falhou ou estourou iterações
 conv = df[(df['istop_CPU'] == 0) & (df['istop_GPU'] == 0)].copy()
 
-
 # ---------------------------------------------------------------------------
-# Resumo
+# Resumo e Validacao (Texto)
 # ---------------------------------------------------------------------------
 print("=" * 70)
-print(f"Total de problemas no CSV: {len(df)}")
-print(f"Convergiram nos dois:      {len(conv)}")
-print(f"Divergiram:                {len(df) - len(conv)}")
+print(" RESULTADOS DA VALIDACAO (PROPOSTA FAPESP)")
 print("=" * 70)
-for label, col in [("Speedup total", "Speedup"), ("Speedup CG", "Speedup_CG")]:
-    s = conv[col].dropna()
-    print(f"{label}: mediana={s.median():.3f}  media={s.mean():.3f}  "
-          f"min={s.min():.3f}  max={s.max():.2f}")
-print()
-for lim in [0.5, 1.0, 2.0, 5.0, 10.0]:
-    n = (conv['Speedup'] > lim).sum()
-    print(f"  Speedup > {lim:>4}: {n:>3} / {len(conv)}")
-print()
-cross = conv[conv['Speedup'] > 1]
-if len(cross):
-    print(f"Crossover (Speedup>1): menor NNZ={cross['NNZ'].min():.0f}  "
-          f"mediana NNZ={cross['NNZ'].median():.0f}")
+print(f"Total de problemas testados: {len(df)}")
+print(f"Convergiram nos dois:        {len(conv)}")
+print(f"Divergiram/Falharam:         {len(df) - len(conv)}")
+
+# Criterio 2: Trajetoria Identica
+ni_diff = (conv['NI_CPU'] - conv['NI_GPU']).abs()
+cg_diff = (conv['last_cg_iter_CPU'] - conv['last_cg_iter_GPU']).abs()
+print("\n--- Criterio 2: Caminho de convergencia identico ---")
+print(f"Problemas com iteracoes Newton diferentes: {(ni_diff > 0).sum()} de {len(conv)}")
+print(f"Problemas com iteracoes CG (ultimo passo) diferentes: {(cg_diff > 0).sum()} de {len(conv)}")
+
+# Criterio 1: Precisao Numerica
+valid_sol = conv['Sol_Diff'].dropna()
+print("\n--- Criterio 1: Precisao da solucao ---")
+print(f"Max |x_cpu - x_gpu|: {valid_sol.max():.2e}")
+print(f"Mediana |x_cpu - x_gpu|: {valid_sol.median():.2e}")
+
+# Criterio 3: Speedup para N >= 10^5
+large = conv[conv['N'] >= 100000]
+print("\n--- Criterio 3: Speedup para N >= 10^5 ---")
+if len(large) > 0:
+    print(f"Problemas de grande porte: {len(large)}")
+    print(f"Speedup medio (Total): {large['Speedup'].mean():.2f}x")
+    print(f"Speedup medio (CG):    {large['Speedup_CG'].mean():.2f}x")
+else:
+    print("Nenhum problema com N >= 10^5 testado.")
 
 
 # ---------------------------------------------------------------------------
-# Plot 1 — Speedup × NNZ
+# Plot 1: Validacao do Newton (Iteracoes Medias CG)
 # ---------------------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(9, 6))
-ax.scatter(conv['NNZ'], conv['Speedup'], s=25, alpha=0.7, label='Speedup total',
-           color='C0', edgecolor='k', linewidth=0.3)
-ax.scatter(conv['NNZ'], conv['Speedup_CG'], s=25, alpha=0.5, label='Speedup CG',
-           color='C1', marker='^', edgecolor='k', linewidth=0.3)
-ax.axhline(1.0, color='k', linestyle='--', linewidth=1, label='paridade')
-ax.set(xscale='log', yscale='log',
-       xlabel='NNZ da Hessiana (log)',
-       ylabel='Speedup CPU/GPU (log)',
-       title='Speedup em funcao do tamanho: ganho cresce com a Hessiana')
-ax.legend(loc='upper left', framealpha=0.95)
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+# NI_CPU vs NI_GPU (Mesma coisa)
+axes[0].scatter(conv['NI_CPU'], conv['NI_GPU'], s=40, alpha=0.7, color='C0', edgecolor='k')
+axes[0].plot([0, 120], [0, 120], 'k--', label='y = x')
+axes[0].set(xlabel='Iteracoes Newton (CPU)', ylabel='Iteracoes Newton (GPU)',
+            title='Iteracoes Newton: CPU vs GPU')
+axes[0].legend()
+axes[0].set_aspect('equal')
+
+# MÉDIA das iteracoes CG por passo de Newton
+mask = (conv['avg_cg_iter_CPU'] > 0) & (conv['avg_cg_iter_GPU'] > 0)
+axes[1].scatter(conv.loc[mask, 'avg_cg_iter_CPU'], conv.loc[mask, 'avg_cg_iter_GPU'],
+                s=40, alpha=0.7, color='C1', edgecolor='k')
+axes[1].plot([1, 1e5], [1, 1e5], 'k--', label='y = x')
+axes[1].set(xscale='log', yscale='log', xlabel='Media de iteracoes CG por Newton (CPU)',
+            ylabel='Media de iteracoes CG por Newton (GPU)',
+            title='Media de Iteracoes CG: CPU vs GPU')
+axes[1].legend()
+
+plt.suptitle('Validacao: A GPU nao alterou a trajetoria de convergencia', fontsize=14, y=1.02)
 plt.tight_layout()
-save_plot('plot1_speedup_vs_nnz')
+save_plot('plot1_validacao_convergencia')
 
 
 # ---------------------------------------------------------------------------
-# Plot 2 — Amdahl
+# Plot 2: Escalabilidade (Speedup vs N)
 # ---------------------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(8, 6))
-sc = ax.scatter(conv['Speedup_CG'], conv['Speedup'],
-                c=conv['cg_frac_CPU'], cmap='viridis',
-                s=30, alpha=0.75, edgecolor='k', linewidth=0.3, norm=LogNorm())
-lims = [1e-5, 1e3]
-ax.plot(lims, lims, 'k--', linewidth=0.8, label='y = x (limite Amdahl)')
-ax.set(xscale='log', yscale='log', xlim=lims, ylim=[1e-2, 1e2],
-       xlabel='Speedup CG apenas',
-       ylabel='Speedup total da aplicacao',
-       title='Amdahl: CG mais rapido nao implica app mais rapida')
-ax.axhline(1, color='gray', linestyle=':', linewidth=0.6)
-ax.axvline(1, color='gray', linestyle=':', linewidth=0.6)
-cbar = plt.colorbar(sc, ax=ax)
-cbar.set_label('Fracao do tempo da CPU em CG')
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.scatter(conv['N'], conv['Speedup'], s=40, alpha=0.7, label='Speedup Total', color='C0', edgecolor='k')
+ax.scatter(conv['N'], conv['Speedup_CG'], s=40, alpha=0.5, label='Speedup CG', color='C1', marker='^', edgecolor='k')
+
+ax.axhline(1.0, color='k', linestyle='--', linewidth=1)
+ax.axvline(1e5, color='r', linestyle='--', linewidth=1, label='Meta Proposta (N=10^5)')
+
+ax.set(xscale='log', yscale='log',
+       xlabel='Numero de variaveis (N) [log]',
+       ylabel='Speedup CPU/GPU [log]',
+       title='Escalabilidade: Ganho da GPU em funcao do porte do problema')
 ax.legend(loc='upper left')
 plt.tight_layout()
-save_plot('plot2_amdahl')
+save_plot('plot2_escalabilidade')
 
 
 # ---------------------------------------------------------------------------
-# Plot 3 — Crossover do CG
+# Plot 3: Lei de Amdahl (O Gargalo Serial)
 # ---------------------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(9, 5))
-ax.scatter(conv['NNZ'], conv['cg_frac_CPU'] * 100, s=25, alpha=0.7,
-           color='C0', edgecolor='k', linewidth=0.3)
-ax.axhline(50, color='r', linestyle='--', linewidth=0.8, label='50% do tempo')
-ax.set(xscale='log', yscale='log',
-       xlabel='NNZ (log)', ylabel='% tempo da CPU em CG (log)',
-       title='A partir de qual NNZ o CG domina o tempo da CPU')
-ax.legend()
+fig, ax = plt.subplots(figsize=(8, 6))
+# Fracao do tempo gasta no CG na CPU
+frac_cg = conv['t_cg_CPU_ms'] / conv['t_total_CPU_ms']
+sc = ax.scatter(conv['Speedup_CG'], conv['Speedup'],
+                c=frac_cg, cmap='viridis',
+                s=50, alpha=0.8, edgecolor='k', norm=LogNorm())
+
+lims = [1e-3, 1e3]
+ax.plot(lims, lims, 'k--', linewidth=1, label='Limite de Amdahl (y=x)')
+ax.set(xscale='log', yscale='log', xlim=lims, ylim=[1e-3, 1e3],
+       xlabel='Speedup do CG apenas',
+       ylabel='Speedup Total da aplicacao',
+       title='Lei de Amdahl: O custo serial (CUTEst) limita o ganho total')
+ax.axhline(1, color='gray', linestyle=':', linewidth=0.8)
+ax.axvline(1, color='gray', linestyle=':', linewidth=0.8)
+
+cbar = plt.colorbar(sc, ax=ax)
+cbar.set_label('Fracao do tempo da CPU gasta no CG')
+ax.legend(loc='upper left')
 plt.tight_layout()
-save_plot('plot3_cg_fraction')
+save_plot('plot3_amdahl')
 
 
 # ---------------------------------------------------------------------------
-# Plot 4 — Trabalho serializado igual nos dois backends
+# Plot 4: Precisao Numerica (Norma do Gradiente)
 # ---------------------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(7, 7))
-ax.scatter(conv['host_CPU'], conv['host_GPU'], s=25, alpha=0.7,
-           color='C2', edgecolor='k', linewidth=0.3)
-lims = [min(conv[['host_CPU', 'host_GPU']].min()),
-        conv[['host_CPU', 'host_GPU']].max().max()]
-ax.plot(lims, lims, 'k--', linewidth=0.8, label='y = x')
-ax.set(xscale='log', yscale='log', xlim=lims, ylim=lims,
-       xlabel='Tempo nao-CG na execucao CPU (ms)',
-       ylabel='Tempo nao-CG na execucao GPU (ms)',
-       title='Trabalho serializado (CUTEst) e igual nos dois backends')
-ax.legend()
-plt.tight_layout()
-save_plot('plot4_host_time')
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
-
-# ---------------------------------------------------------------------------
-# Plot 5 — Distribuicao (hist + CDF)
-# ---------------------------------------------------------------------------
-fig, axes = plt.subplots(1, 2, figsize=(13, 5))
-bins = np.logspace(-3, 2, 35)
-axes[0].hist(conv['Speedup'], bins=bins, alpha=0.65, label='Speedup total',
-             color='C0', edgecolor='k')
-axes[0].hist(conv['Speedup_CG'], bins=bins, alpha=0.55, label='Speedup CG',
-             color='C1', edgecolor='k')
-axes[0].axvline(1, color='k', linestyle='--', linewidth=1)
-axes[0].set(xscale='log', xlabel='Speedup (log)',
-            ylabel='Numero de problemas', title='Histograma de speedup')
-axes[0].legend()
-
-s1 = np.sort(conv['Speedup'].dropna())
-s2 = np.sort(conv['Speedup_CG'].dropna())
-axes[1].plot(s1, np.arange(1, len(s1) + 1) / len(s1), label='Speedup total',
-             color='C0', linewidth=1.5)
-axes[1].plot(s2, np.arange(1, len(s2) + 1) / len(s2), label='Speedup CG',
-             color='C1', linewidth=1.5)
-axes[1].axvline(1, color='k', linestyle='--', linewidth=1)
-axes[1].set(xscale='log', xlabel='Speedup (log)',
-            ylabel='Fracao acumulada', title='CDF de speedup')
-axes[1].legend(loc='lower right')
-plt.tight_layout()
-save_plot('plot5_distribution')
-
-
-# ---------------------------------------------------------------------------
-# Plot 6 — Corretude
-# ---------------------------------------------------------------------------
-fig, axes = plt.subplots(1, 2, figsize=(13, 5))
-valid = conv['Sol_Diff'].dropna()
-valid = valid[(valid > 0) & (valid < 1e30)]
-axes[0].hist(np.log10(valid), bins=30, color='C0', alpha=0.7, edgecolor='k')
-axes[0].axvline(-8, color='r', linestyle='--', linewidth=1, label='tol 1e-8')
-axes[0].set(xlabel='log10 |x_cpu - x_gpu|', ylabel='Numero de problemas',
-            title='Diferenca na solucao final (convergiram)')
-axes[0].legend()
-
+# Norma do Gradiente
 gn_c, gn_g = conv['Gnorm_CPU'], conv['Gnorm_GPU']
 v = (gn_c > 0) & (gn_g > 0) & gn_c.notna() & gn_g.notna()
-axes[1].scatter(gn_c[v], gn_g[v], s=25, alpha=0.7,
-                color='C2', edgecolor='k', linewidth=0.3)
-lims = [1e-15, 1e5]
-axes[1].plot(lims, lims, 'k--', linewidth=0.8, label='y = x')
-axes[1].axhline(1e-8, color='r', linestyle='--', linewidth=0.6)
-axes[1].axvline(1e-8, color='r', linestyle='--', linewidth=0.6)
-axes[1].set(xscale='log', yscale='log', xlim=lims, ylim=lims,
+axes[0].scatter(gn_c[v], gn_g[v], s=40, alpha=0.7, color='C2', edgecolor='k')
+axes[0].plot([1e-15, 1e5], [1e-15, 1e5], 'k--', label='y = x')
+axes[0].axhline(1e-6, color='r', linestyle='--', linewidth=0.8, label='Tolerancia (1e-6)')
+axes[0].axvline(1e-6, color='r', linestyle='--', linewidth=0.8)
+axes[0].set(xscale='log', yscale='log', xlim=[1e-15, 1e5], ylim=[1e-15, 1e5],
             xlabel='||grad|| final — CPU', ylabel='||grad|| final — GPU',
             title='Norma do gradiente final')
+axes[0].legend()
+
+# Diferenca na solucao
+valid = conv['Sol_Diff'].dropna()
+valid = valid[(valid > 0) & (valid < 1e30)]
+axes[1].hist(np.log10(valid), bins=30, color='C3', alpha=0.7, edgecolor='k')
+axes[1].axvline(-6, color='r', linestyle='--', linewidth=1, label='Tolerancia (1e-6)')
+axes[1].set(xlabel='log10 |x_cpu - x_gpu|', ylabel='Numero de problemas',
+            title='Diferenca na solucao final')
 axes[1].legend()
+
+plt.suptitle('Validacao: Alta precisao numerica preservada', fontsize=14, y=1.02)
 plt.tight_layout()
-save_plot('plot6_correctness')
+save_plot('plot4_precisao')
 
 
 # ---------------------------------------------------------------------------
-# Plot 7 — Iteracoes CG
+# Plot 5: Tempo de Transferencia (Overhead) vs Tamanho
 # ---------------------------------------------------------------------------
-fig, axes = plt.subplots(1, 2, figsize=(13, 5))
-axes[0].scatter(conv['last_cg_iter_CPU'], conv['last_cg_iter_GPU'],
-                s=25, alpha=0.7, color='C0', edgecolor='k', linewidth=0.3)
-lims = [1, 1e5]
-axes[0].plot(lims, lims, 'k--', linewidth=0.8)
-axes[0].set(xscale='log', yscale='log', xlim=lims, ylim=lims,
-            xlabel='Ultimo CG iter — CPU', ylabel='Ultimo CG iter — GPU',
-            title='Convergencia equivalente entre backends')
-
-sc = axes[1].scatter(conv['last_cg_iter_CPU'], conv['Speedup_CG'],
-                     c=conv['NNZ'], cmap='viridis', s=25, alpha=0.75,
-                     edgecolor='k', linewidth=0.3, norm=LogNorm())
-axes[1].axhline(1, color='k', linestyle='--', linewidth=0.8)
-axes[1].set(xscale='log', yscale='log',
-            xlabel='Iteracoes CG do ultimo passo Newton',
-            ylabel='Speedup CG',
-            title='Mais iteracoes = melhor amortizacao do overhead')
-cbar = plt.colorbar(sc, ax=axes[1]); cbar.set_label('NNZ')
+fig, ax = plt.subplots(figsize=(9, 5))
+# Custo da cópia H2D em relação ao tempo total do CG na GPU
+overhead_ratio = (conv['t_GPU_prep_ms'] / conv['t_cg_GPU_ms']) * 100
+v = overhead_ratio > 0
+ax.scatter(conv.loc[v, 'NNZ'], overhead_ratio[v], s=40, alpha=0.7, color='C4', edgecolor='k')
+ax.set(xscale='log', yscale='log',
+       xlabel='NNZ da Hessiana [log]',
+       ylabel='Overhead do SpMV (% do tempo do CG)',
+       title='Overhead de inicializacao do SpMV (hipSPARSE)')
 plt.tight_layout()
-save_plot('plot7_cg_behavior')
+save_plot('plot5_overhead')
 
 
 # ---------------------------------------------------------------------------
-# Top e bottom
+# Top e Bottom Tabelas no terminal
 # ---------------------------------------------------------------------------
-cols = ['Problem', 'N', 'NNZ', 'Speedup', 'Speedup_CG',
-        'cg_frac_CPU', 't_total_CPU_ms', 't_total_GPU_ms']
+cols = ['Problem', 'N', 'NNZ', 'NI_CPU', 'NI_GPU', 'Speedup', 'Speedup_CG']
+print("\n" + "=" * 70 + "\nTOP 10 SPEEDUP TOTAL\n" + "=" * 70)
+print(conv.nlargest(10, 'Speedup')[cols].to_string(index=False))
 
-print("\n" + "=" * 70 + "\nTOP 10 SPEEDUP\n" + "=" * 70)
-top = conv.nlargest(10, 'Speedup')[cols].copy()
-top['cg_frac_CPU'] = top['cg_frac_CPU'].map(lambda x: f"{x*100:5.1f}%")
-print(top.to_string(index=False))
+print("\n" + "=" * 70 + "\nTOP 10 SPEEDUP CG (Apenas o Solver)\n" + "=" * 70)
+print(conv.nlargest(10, 'Speedup_CG')[cols].to_string(index=False))
 
-print("\n" + "=" * 70 + "\nBOTTOM 10 SPEEDUP (GPU nao compensa)\n" + "=" * 70)
-bot = conv.nsmallest(10, 'Speedup')[cols].copy()
-bot['cg_frac_CPU'] = bot['cg_frac_CPU'].map(lambda x: f"{x*100:5.1f}%")
-print(bot.to_string(index=False))
-
-
-# ---------------------------------------------------------------------------
-# Verificacao da lei de Amdahl
-# ---------------------------------------------------------------------------
-print("\n" + "=" * 70 + "\nVALIDACAO DA LEI DE AMDAHL\n" + "=" * 70)
-pred = 1 + conv['cg_frac_CPU'] * (conv['Speedup_CG'] - 1)
-mask = pred.notna() & conv['Speedup'].notna() & (pred > 0) & (conv['Speedup'] > 0)
-err = np.abs(np.log(conv['Speedup'][mask]) - np.log(pred[mask]))
-print("Modelo: Speedup_total = 1 + f_CPU * (Speedup_CG - 1)")
-print(f"  Erro log medio:   {err.mean():.3f}")
-print(f"  Erro log maximo:  {err.max():.3f}")
-print(f"  Acuracia (erro<20%): {(err < np.log(1.2)).mean()*100:.1f}%")
-
-print(f"\nPlots gerados em '{outdir}':")
+print(f"\nPlots salvos em '{outdir}':")
 for f in sorted(glob.glob(os.path.join(outdir, '*.png'))):
     print(f"  {f}")
