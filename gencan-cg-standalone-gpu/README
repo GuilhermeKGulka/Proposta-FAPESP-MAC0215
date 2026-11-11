@@ -1,0 +1,144 @@
+======
+GENCAN
+======
+
+Gencan solves
+
+    Minimize f(x)   subject to   l <= x <= u
+
+(or unconstrained problems, through the entry point genunc) by an
+active-set method whose inner step is a truncated Newton direction
+computed with the conjugate gradient method. The user provides f, its
+gradient and, optionally, its sparse Hessian.
+
+Files
+-----
+
+    sources/gencan.f90     the solver (genunc and gencan)
+    sources/cgm.f90        the conjugate gradient method
+    sources/lssit.f90      Hessian-vector products and preconditioner
+    sources/toyprob.f90    example: generalized Rosenbrock, n variables
+    sources/cutestma.f90   driver for CUTEst problems
+    compile.sh             builds the example
+    run-cutest.sh          runs CUTEst problems
+    problems.txt           475 unconstrained / box-constrained CUTEst problems
+
+
+===========
+THE EXAMPLE
+===========
+
+    ./compile.sh
+    ./toyprob
+
+toyprob.f90 solves the generalized Rosenbrock function twice: without
+bounds (genunc) and with the box -2 <= x <= 0.5 (gencan). It is the
+place to start: it shows the three routines you have to write --
+evalf, evalg and evalh -- and the two calls to the solver. The
+Hessian is given in sparse coordinate format, lower triangle only.
+Change the parameter n at the top of the file to run larger instances.
+
+
+============================
+SOLVING PROBLEMS FROM CUTEST
+============================
+
+If the variables CUTEST, SIFDECODE, MASTSIF and MYARCH are already set
+in your environment, nothing needs to be edited. Otherwise, uncomment
+the four export lines at the top of run-cutest.sh and write your paths
+there. Then:
+
+    ./run-cutest.sh                 all the problems in problems.txt
+    ./run-cutest.sh ROSENBR         one problem
+    ./run-cutest.sh -f mylist.txt   the problems in mylist.txt, one name per line
+
+The output of the solver goes to the screen. Setting table=1 in
+run-cutest.sh also appends one line per problem to table-gencan.txt:
+
+    Problem  SC  IERR  CPU(s)  n  f  gpsupn  iter  fcnt  gcnt  hcnt
+
+    SC      stopping code: 0 = converged (||projected gradient||_inf <= 1e-8),
+            99 = CPU-time limit reached (tlim in run-cutest.sh, default 600 s)
+    gpsupn  sup-norm of the projected gradient at the final point
+    fcnt, gcnt, hcnt   number of calls to evalf, evalg, evalh
+
+To build a list of problems, copy the names you want from problems.txt
+into a file, one per line; lines starting with # are ignored.
+
+
+====================================
+TRUE HESSIAN OR SECANT APPROXIMATION
+====================================
+
+The solver has two modes, chosen by the logical truehp (set in
+toyprob.f90 and in cutestma.f90, default .true.):
+
+    truehp = .true.    Newton-CG with the true Hessian: evalh is called
+                       and the CG solves a genuine sparse linear system.
+    truehp = .false.   the Hessian-vector product is replaced by a
+                       secant approximation built from function and
+                       gradient values; evalh is never called.
+
+For work on the linear solver itself (e.g. a CG on GPU) the first mode
+is the relevant one.
+
+
+===============
+FLOW OF CONTROL
+===============
+
+    genunc / gencan  (gencan.f90)
+        |
+        |  at each iteration: chooses the free variables, then asks
+        |  for a Newton direction on them
+        v
+    cgm  (cgm.f90)
+        |
+        |  solves  H d = -g  on the free variables by conjugate
+        |  gradients; at each CG iteration it needs two operations
+        v
+    computehv, applyhpre  (lssit.f90)
+        |
+        |  computehv:  the product H v.  With truehp = .true. it uses
+        |              the sparse Hessian stored in lssit (arrays hrow,
+        |              hcol, hval, filled by evalh); with .false. it
+        |              uses the secant approximation.
+        |  applyhpre:  application of the preconditioner.
+        v
+    evalf, evalg, evalh  (your routines)
+
+gencan.f90 calls the user routines for f and its gradient, and hands
+evalh to lssit, which stores the Hessian and provides the products.
+cgm.f90 never sees the user routines nor the matrix: it only calls
+computehv and applyhpre.
+
+
+==================================
+WHERE THE CONJUGATE GRADIENT LIVES
+==================================
+
+The whole CG is the subroutine cgm in sources/cgm.f90, about 300
+lines. To replace it by another linear solver, keep its interface and
+rewrite its body; gencan.f90 does not need to change. In the
+truehp = .true. mode the Hessian is available inside lssit as a sparse
+matrix in coordinate format (hrow, hcol, hval, lower triangle), which
+is what a GPU kernel would consume.
+
+
+=============
+SCREEN OUTPUT
+=============
+
+The amount of output is set by the constant iprint at the top of
+gencan.f90 (edit and recompile):
+
+    iprint =  0   nothing
+    iprint =  2   one line every iprintstep iterations plus the stopping
+                  reason (the default)
+    iprint =  3   one line per iteration
+    iprint = 10   everything: the line search, the face decisions, the
+                  tolerance and iteration limit of each CG call, and one
+                  line per CG iteration
+
+The line per CG iteration at level 10 is the place to look when working
+inside cgm.f90.
