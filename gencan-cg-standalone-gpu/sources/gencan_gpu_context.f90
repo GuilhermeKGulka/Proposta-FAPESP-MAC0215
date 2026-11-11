@@ -9,6 +9,7 @@ module gencan_gpu_context
 
   private
   public :: gencan_cg_context, init_gencan_gpu, finalize_gencan_gpu, copy_hessian_to_gpu
+  public :: alpha_one, alpha_zero
   
   real(c_double), target, save :: alpha_one = 1.0d0, alpha_zero = 0.0d0
 
@@ -16,6 +17,8 @@ module gencan_gpu_context
     type(c_ptr) :: hsparse_handle = c_null_ptr
     type(c_ptr) :: hblas_handle   = c_null_ptr
     type(c_ptr) :: mat_h          = c_null_ptr
+    type(c_ptr) :: vec_p          = c_null_ptr
+    type(c_ptr) :: vec_hp         = c_null_ptr
     type(c_ptr) :: d_buf          = c_null_ptr
     
     type(c_ptr) :: d_x   = c_null_ptr
@@ -77,13 +80,16 @@ contains
     call hipCheck(hipMalloc(ctx%d_amax,  8_c_size_t))
     call hipCheck(hipMalloc(ctx%d_abox,  8_c_size_t))
 
-    ! CORRIGIDO: Alocando o dobro do espaço para a Hessiana espelhada (simétrica completa)
     call hipCheck(hipMalloc(ctx%d_hrow_ptr, (n+1) * 4_c_size_t))
     call hipCheck(hipMalloc(ctx%d_hcol, 2 * nnz_max * 4_c_size_t))
     call hipCheck(hipMalloc(ctx%d_hval, 2 * nnz_max * 8_c_size_t))
 
     call hipsparseCheck(hipsparseCreate(ctx%hsparse_handle))
     call hipblasCheck(hipblasCreate(ctx%hblas_handle))
+
+    ! Cria os descritores com tamanho n (garantindo que o vetor tenha tamanho n)
+    call hs_check(hs_create_dnvec(ctx%vec_p,  int(n, c_int64_t), ctx%d_p,  HS_R_64F), "CreateDnVec p")
+    call hs_check(hs_create_dnvec(ctx%vec_hp, int(n, c_int64_t), ctx%d_hp, HS_R_64F), "CreateDnVec hp")
 
     ctx%initialized = .true.
   end subroutine
@@ -99,7 +105,6 @@ contains
     integer, allocatable, target :: row_counts(:), cur_ptr(:), hcol_csr(:), hrow_ptr(:)
     real(8), allocatable, target :: hval_csr(:)
 
-    ! 1. Contagem
     nnz_total = hnnz_upper
     do k = 1, hnnz_upper
       if (hrow_coo(k) /= hcol_coo(k)) nnz_total = nnz_total + 1
@@ -114,13 +119,11 @@ contains
         row_counts(hcol_coo(k)) = row_counts(hcol_coo(k)) + 1
     end do
 
-    ! 2. Ponteiros
     hrow_ptr(1) = 1
     do i = 1, n
       hrow_ptr(i+1) = hrow_ptr(i) + row_counts(i)
     end do
 
-    ! 3. Preenchimento
     cur_ptr = hrow_ptr(1:n)
     do k = 1, hnnz_upper
       r = hrow_coo(k); c = hcol_coo(k)
@@ -132,12 +135,10 @@ contains
       end if
     end do
 
-    ! 4. Enviar para GPU
     call hipCheck(hipMemcpy(ctx%d_hrow_ptr, c_loc(hrow_ptr), (n+1)*4_c_size_t, hipMemcpyHostToDevice))
     call hipCheck(hipMemcpy(ctx%d_hcol, c_loc(hcol_csr), nnz_total*4_c_size_t, hipMemcpyHostToDevice))
     call hipCheck(hipMemcpy(ctx%d_hval, c_loc(hval_csr), nnz_total*8_c_size_t, hipMemcpyHostToDevice))
 
-    ! 5. Recriar Descritor hipSPARSE
     if (ctx%spmv_ready) then
       call hs_check(hs_destroy_spmat(ctx%mat_h), "DestroySpMat")
       call hs_free_buffer(ctx%d_buf)
@@ -148,9 +149,11 @@ contains
                   HS_INDEX_32I, HS_INDEX_32I, HS_BASE_ONE, HS_R_64F), "CreateCsr")
     
     call hs_check(hs_spmv_buffer_size(ctx%hsparse_handle, HS_OP_N, c_loc(alpha_one), ctx%mat_h, &
-                  ctx%d_p, c_loc(alpha_zero), ctx%d_hp, HS_R_64F, HS_SPMV_ALG_DEFAULT, bsz), "BufferSize")
+                  ctx%vec_p, c_loc(alpha_zero), ctx%vec_hp, HS_R_64F, HS_SPMV_ALG_DEFAULT, bsz), "BufferSize")
     
     call hs_alloc_buffer(ctx%d_buf, bsz)
+    
+    ! PREPROCESS REMOVIDO (o hipSPARSE genérico funciona sem ele na maioria dos casos)
     
     ctx%spmv_ready = .true.
 
@@ -161,6 +164,14 @@ contains
     type(gencan_cg_context), intent(inout) :: ctx
     if (.not. ctx%initialized) return
     
+    if (ctx%spmv_ready) then
+      call hs_check(hs_destroy_spmat(ctx%mat_h), "DestroySpMat")
+      call hs_free_buffer(ctx%d_buf)
+    end if
+    
+    call hs_check(hs_destroy_dnvec(ctx%vec_p), "DestroyDnVec p")
+    call hs_check(hs_destroy_dnvec(ctx%vec_hp), "DestroyDnVec hp")
+    
     call hipCheck(hipFree(ctx%d_x)); call hipCheck(hipFree(ctx%d_g)); call hipCheck(hipFree(ctx%d_d))
     call hipCheck(hipFree(ctx%d_p)); call hipCheck(hipFree(ctx%d_hp)); call hipCheck(hipFree(ctx%d_r))
     call hipCheck(hipFree(ctx%d_z)); call hipCheck(hipFree(ctx%d_x_lb)); call hipCheck(hipFree(ctx%d_x_ub))
@@ -168,11 +179,6 @@ contains
     call hipCheck(hipFree(ctx%d_hrow_ptr)); call hipCheck(hipFree(ctx%d_hcol)); call hipCheck(hipFree(ctx%d_hval))
     call hipCheck(hipFree(ctx%d_alpha)); call hipCheck(hipFree(ctx%d_beta)); call hipCheck(hipFree(ctx%d_dot))
     call hipCheck(hipFree(ctx%d_amax)); call hipCheck(hipFree(ctx%d_abox))
-    
-    if (ctx%spmv_ready) then
-      call hs_check(hs_destroy_spmat(ctx%mat_h), "DestroySpMat")
-      call hs_free_buffer(ctx%d_buf)
-    end if
     
     call hipsparseCheck(hipsparseDestroy(ctx%hsparse_handle))
     call hipblasCheck(hipblasDestroy(ctx%hblas_handle))

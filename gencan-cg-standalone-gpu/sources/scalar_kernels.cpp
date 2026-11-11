@@ -37,31 +37,31 @@ __global__ void update_p_kernel(int nfr, double bbeta, const double* z, double* 
 }
 
 extern "C" {
-    void launch_compute_amax_abox(int nfr, double* delta_ptr, double* p, double* d, double* x, 
+    // Passando delta por valor
+    void launch_compute_amax_abox(int nfr, double delta, double* p, double* d, double* x, 
                                   double* lbnd, double* ubnd, int* lind, int* uind, int* ifr, 
                                   double* amax, double* abox) {
+        if (nfr <= 0) return;
         double init_val = 1e16;
         (void) hipMemcpy(amax, &init_val, sizeof(double), hipMemcpyHostToDevice);
         (void) hipMemcpy(abox, &init_val, sizeof(double), hipMemcpyHostToDevice);
         
-        double delta_host;
-        (void) hipMemcpy(&delta_host, delta_ptr, sizeof(double), hipMemcpyDeviceToHost);
-        
         int threads = 256;
         int blocks = (nfr + threads - 1) / threads;
         hipLaunchKernelGGL(compute_amax_abox_kernel, dim3(blocks), dim3(threads), 0, 0, 
-                           nfr, delta_host, p, d, x, lbnd, ubnd, lind, uind, ifr, amax, abox);
+                           nfr, delta, p, d, x, lbnd, ubnd, lind, uind, ifr, amax, abox);
     }
     
-    void launch_update_d_r(int nfr, double* alpha_ptr, double* p, double* hp, double* d, double* r) {
-        double alpha_host;
-        (void) hipMemcpy(&alpha_host, alpha_ptr, sizeof(double), hipMemcpyDeviceToHost);
+    // Passando alpha por valor
+    void launch_update_d_r(int nfr, double alpha, double* p, double* hp, double* d, double* r) {
+        if (nfr <= 0) return;
         int threads = 256;
         int blocks = (nfr + threads - 1) / threads;
-        hipLaunchKernelGGL(update_d_r_kernel, dim3(blocks), dim3(threads), 0, 0, nfr, alpha_host, p, hp, d, r);
+        hipLaunchKernelGGL(update_d_r_kernel, dim3(blocks), dim3(threads), 0, 0, nfr, alpha, p, hp, d, r);
     }
 
     void launch_update_p_vector(int nfr, double* p, const double* z, double bbeta) {
+        if (nfr <= 0) return;
         int threads = 256;
         int blocks = (nfr + threads - 1) / threads;
         hipLaunchKernelGGL(update_p_kernel, dim3(blocks), dim3(threads), 0, 0, nfr, bbeta, z, p);

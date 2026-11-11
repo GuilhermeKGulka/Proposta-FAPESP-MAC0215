@@ -12,19 +12,23 @@ module modcgm_gpu
     private
     public :: cgm_gpu
 
-    real(c_double), target, save :: alpha_one = 1.0d0, alpha_zero = 0.0d0
-
     interface
+       ! Corrigido: delta passado por valor
        subroutine launch_compute_amax_abox(nfr, delta, p, d, x, lbnd, ubnd, lind, uind, ifr, amax, abox) bind(C, name="launch_compute_amax_abox")
-         import :: c_ptr, c_int
+         import :: c_ptr, c_int, c_double
          integer(c_int), value :: nfr
-         type(c_ptr), value :: delta, p, d, x, lbnd, ubnd, lind, uind, ifr, amax, abox
+         real(c_double), value :: delta
+         type(c_ptr), value :: p, d, x, lbnd, ubnd, lind, uind, ifr, amax, abox
        end subroutine
+       
+       ! Corrigido: alpha passado por valor
        subroutine launch_update_d_r(nfr, alpha, p, hp, d, r) bind(C, name="launch_update_d_r")
-         import :: c_ptr, c_int
+         import :: c_ptr, c_int, c_double
          integer(c_int), value :: nfr
-         type(c_ptr), value :: alpha, p, hp, d, r
+         real(c_double), value :: alpha
+         type(c_ptr), value :: p, hp, d, r
        end subroutine
+       
        subroutine launch_update_p_vector(nfr, p, z, bbeta) bind(C, name="launch_update_p_vector")
          import :: c_ptr, c_int, c_double
          integer(c_int), value :: nfr
@@ -47,8 +51,6 @@ module modcgm_gpu
         logical, intent(in) :: precond
 
         logical, intent(in) :: lind(n),uind(n)
-        
-        ! CORRIGIDO: Adicionado 'target' no ifr
         integer, intent(in), target :: ifr(nfr)
         
         real(kind=8), intent(in), target :: x(n),g(nfr),lbnd(n),ubnd(n)
@@ -58,7 +60,6 @@ module modcgm_gpu
         real(kind=8), target :: q, qprev, bestprog, currprog, ztrprev, znorm2, bbeta
         real(kind=8), parameter :: macheps = 1.0d-16, epsnqmp = 1.0d-08
         integer, parameter :: maxcgitnp = 5
-        real(kind=8), target :: delta_target
         integer :: itnqmp
         logical :: samep, restarted
 
@@ -68,7 +69,6 @@ module modcgm_gpu
         ierr = 0; iter = 0; cginfo = 0; itnqmp = 0
         restarted = .false.
         qprev = huge(1.0d0); bestprog = 0.0d0
-        delta_target = delta
 
         call copy_hessian_to_gpu(ctx, n, lssit_obj%hne, lssit_obj%hval, lssit_obj%hrow, lssit_obj%hcol)
 
@@ -138,14 +138,15 @@ module modcgm_gpu
             ptr = -ptr
         end if
 
-        call hs_check(hs_spmv(ctx%hsparse_handle, HS_OP_N, c_loc(alpha_one), ctx%mat_h, ctx%d_p, &
-                      c_loc(alpha_zero), ctx%d_hp, HS_R_64F, HS_SPMV_ALG_DEFAULT, ctx%d_buf), "SpMV")
+        call hs_check(hs_spmv(ctx%hsparse_handle, HS_OP_N, c_loc(alpha_one), ctx%mat_h, ctx%vec_p, &
+                      c_loc(alpha_zero), ctx%vec_hp, HS_R_64F, HS_SPMV_ALG_DEFAULT, ctx%d_buf), "SpMV")
         
         call hipblasCheck(hipblasDotEx(ctx%hblas_handle, nfr, ctx%d_p, HIP_R_64F, 1, &
                                        ctx%d_hp, HIP_R_64F, 1, ctx%d_dot, HIP_R_64F, HIP_R_64F))
         call hipCheck(hipMemcpy(c_loc(pthp), ctx%d_dot, 8_c_size_t, hipMemcpyDeviceToHost))
 
-        call launch_compute_amax_abox(int(nfr, c_int), c_loc(delta_target), ctx%d_p, ctx%d_d, &
+        ! Passando delta por valor
+        call launch_compute_amax_abox(int(nfr, c_int), delta, ctx%d_p, ctx%d_d, &
                                        ctx%d_x, ctx%d_x_lb, ctx%d_x_ub, ctx%d_lind, ctx%d_uind, &
                                        ctx%d_ifr, ctx%d_amax, ctx%d_abox)
         call hipCheck(hipMemcpy(c_loc(amax), ctx%d_amax, 8_c_size_t, hipMemcpyDeviceToHost))
@@ -159,7 +160,8 @@ module modcgm_gpu
             cginfo = 7; return
         end if
 
-        call launch_update_d_r(int(nfr, c_int), c_loc(alpha), ctx%d_p, ctx%d_hp, ctx%d_d, ctx%d_r)
+        ! Passando alpha por valor
+        call launch_update_d_r(int(nfr, c_int), alpha, ctx%d_p, ctx%d_hp, ctx%d_d, ctx%d_r)
         
         call hipblasCheck(hipblasDotEx(ctx%hblas_handle, nfr, ctx%d_r, HIP_R_64F, 1, &
                                        ctx%d_r, HIP_R_64F, 1, ctx%d_dot, HIP_R_64F, HIP_R_64F))
@@ -167,10 +169,6 @@ module modcgm_gpu
 
         if ( alpha .eq. amax ) then; cginfo = 1; return; end if
         if ( abox .le. 0.1d0 ) then; cginfo = 5; return; end if
-        
-        samep = .true.
-        if ( abs(alpha * maxval(abs(d))) .gt. macheps * max(1.0d0, maxval(abs(d))) ) samep = .false.
-        if ( samep ) then; cginfo = 6; return; end if
 
         ztrprev = ztr
         ztr = rnorm2
