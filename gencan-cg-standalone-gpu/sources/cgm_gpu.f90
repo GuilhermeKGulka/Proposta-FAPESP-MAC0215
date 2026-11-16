@@ -1,186 +1,261 @@
-module modcgm_gpu
-    use lssit
-    use gencan_gpu_context
-    use hipfort
-    use hipfort_check
-    use hipfort_hipsparse
-    use hipfort_hipBLAS
-    use hipsparse_generic
-    use iso_c_binding
-    implicit none
+module cgm_gpu_mod
+  use iso_c_binding
+  use hipfort
+  use hipfort_check
+  use hess_csr_mod
+  implicit none
+  private
+  public :: cgm_gpu_ctx, cgm_gpu_init, cgm_gpu_free, cgm_gpu
 
-    private
-    public :: cgm_gpu
+  integer, parameter :: MAXB = 1024
+  real(kind=8), parameter :: macheps = 1.0d-16, epsnqmp = 1.0d-08, lrgstreal = huge(1.0d0)
+  integer, parameter :: maxcgitnp = 5
 
-    interface
-       ! Corrigido: delta passado por valor
-       subroutine launch_compute_amax_abox(nfr, delta, p, d, x, lbnd, ubnd, lind, uind, ifr, amax, abox) bind(C, name="launch_compute_amax_abox")
-         import :: c_ptr, c_int, c_double
-         integer(c_int), value :: nfr
-         real(c_double), value :: delta
-         type(c_ptr), value :: p, d, x, lbnd, ubnd, lind, uind, ifr, amax, abox
-       end subroutine
-       
-       ! Corrigido: alpha passado por valor
-       subroutine launch_update_d_r(nfr, alpha, p, hp, d, r) bind(C, name="launch_update_d_r")
-         import :: c_ptr, c_int, c_double
-         integer(c_int), value :: nfr
-         real(c_double), value :: alpha
-         type(c_ptr), value :: p, hp, d, r
-       end subroutine
-       
-       subroutine launch_update_p_vector(nfr, p, z, bbeta) bind(C, name="launch_update_p_vector")
-         import :: c_ptr, c_int, c_double
-         integer(c_int), value :: nfr
-         type(c_ptr), value :: p, z
-         real(c_double), value :: bbeta
-       end subroutine
-    end interface
+  interface
+    subroutine launch_cgm_update_p(n, coef, r, p) bind(C, name="launch_cgm_update_p")
+      import :: c_int, c_double, c_ptr
+      integer(c_int), value :: n
+      real(c_double), value :: coef
+      type(c_ptr), value :: r, p
+    end subroutine
+    subroutine launch_cgm_dots1(n, delta, p, hp, d, g, r, part, cnt, out) bind(C, name="launch_cgm_dots1")
+      import :: c_int, c_double, c_ptr
+      integer(c_int), value :: n
+      real(c_double), value :: delta
+      type(c_ptr), value :: p, hp, d, g, r, part, cnt, out
+    end subroutine
+    subroutine launch_cgm_update(n, coef, macheps, p, hp, d, r, xf, lbf, ubf, lindf, uindf, &
+                                 part, cnt, out) bind(C, name="launch_cgm_update")
+      import :: c_int, c_double, c_ptr
+      integer(c_int), value :: n
+      real(c_double), value :: coef, macheps
+      type(c_ptr), value :: p, hp, d, r, xf, lbf, ubf, lindf, uindf, part, cnt, out
+    end subroutine
+  end interface
 
-  contains
-    subroutine cgm_gpu (n,nfr,ifr,x,lind,lbnd,uind,ubnd,g,delta,eps,maxit,&
-            precond,d,iter,iprint,ierr,cginfo,lssit_obj, ctx)
-        
-        implicit none
+  type :: cgm_gpu_ctx
+    integer :: n = 0
+    type(hess_csr_type) :: h                 ! Hessiana CSR (nfr x nfr) + SpMV
+    type(c_ptr) :: d_g = c_null_ptr, d_d = c_null_ptr, d_p = c_null_ptr
+    type(c_ptr) :: d_hp = c_null_ptr, d_r = c_null_ptr
+    type(c_ptr) :: d_xf = c_null_ptr, d_lbf = c_null_ptr, d_ubf = c_null_ptr
+    type(c_ptr) :: d_lindf = c_null_ptr, d_uindf = c_null_ptr
+    type(c_ptr) :: d_part = c_null_ptr, d_cnt = c_null_ptr, d_red = c_null_ptr
+    real(c_double), allocatable :: xf(:), lbf(:), ubf(:)
+    integer(c_int), allocatable :: lindf(:), uindf(:)
+  end type cgm_gpu_ctx
 
-        integer, intent(in) :: n,nfr,maxit,iprint
-        integer, intent(out):: iter,ierr,cginfo
-        real(kind=8), intent(in) :: delta,eps
-        type(lssit_type), intent(in) :: lssit_obj
-        type(gencan_cg_context), intent(inout) :: ctx
-        logical, intent(in) :: precond
+contains
 
-        logical, intent(in) :: lind(n),uind(n)
-        integer, intent(in), target :: ifr(nfr)
-        
-        real(kind=8), intent(in), target :: x(n),g(nfr),lbnd(n),ubnd(n)
-        real(kind=8), intent(out) :: d(n)
-        
-        real(kind=8), target :: alpha, amax, abox, ztr, rnorm2, gnorm2, ptr, pthp, dnorm2, gtd
-        real(kind=8), target :: q, qprev, bestprog, currprog, ztrprev, znorm2, bbeta
-        real(kind=8), parameter :: macheps = 1.0d-16, epsnqmp = 1.0d-08
-        integer, parameter :: maxcgitnp = 5
-        integer :: itnqmp
-        logical :: samep, restarted
+  subroutine cgm_gpu_init(ctx, n, hnnzmax, do_prep)
+    type(cgm_gpu_ctx), intent(inout) :: ctx
+    integer, intent(in) :: n, hnnzmax
+    logical, intent(in) :: do_prep
+    ctx%n = n
+    call hipCheck(hipMalloc(ctx%d_g,  n * 8_c_size_t))
+    call hipCheck(hipMalloc(ctx%d_d,  n * 8_c_size_t))
+    call hipCheck(hipMalloc(ctx%d_p,  n * 8_c_size_t))
+    call hipCheck(hipMalloc(ctx%d_hp, n * 8_c_size_t))
+    call hipCheck(hipMalloc(ctx%d_r,  n * 8_c_size_t))
+    call hipCheck(hipMalloc(ctx%d_xf,  n * 8_c_size_t))
+    call hipCheck(hipMalloc(ctx%d_lbf, n * 8_c_size_t))
+    call hipCheck(hipMalloc(ctx%d_ubf, n * 8_c_size_t))
+    call hipCheck(hipMalloc(ctx%d_lindf, n * 4_c_size_t))
+    call hipCheck(hipMalloc(ctx%d_uindf, n * 4_c_size_t))
+    call hipCheck(hipMalloc(ctx%d_part, MAXB * 7 * 8_c_size_t))
+    call hipCheck(hipMalloc(ctx%d_cnt, 4_c_size_t))
+    call hipCheck(hipMemset(ctx%d_cnt, 0, 4_c_size_t))
+    call hipCheck(hipMalloc(ctx%d_red, 8 * 8_c_size_t))
+    allocate(ctx%xf(n), ctx%lbf(n), ctx%ubf(n), ctx%lindf(n), ctx%uindf(n))
+    ! SpMV: x = p, y = Hp
+    call hess_csr_init(ctx%h, n, hnnzmax, ctx%d_p, ctx%d_hp, do_prep)
+  end subroutine cgm_gpu_init
 
-        integer(c_int), allocatable, target :: lind_int(:), uind_int(:)
-        real(kind=8), allocatable, target :: d_gpu(:)
-        
-        ierr = 0; iter = 0; cginfo = 0; itnqmp = 0
-        restarted = .false.
-        qprev = huge(1.0d0); bestprog = 0.0d0
+  subroutine cgm_gpu_free(ctx)
+    type(cgm_gpu_ctx), intent(inout) :: ctx
+    call hess_csr_free(ctx%h)
+    call hipCheck(hipFree(ctx%d_g));  call hipCheck(hipFree(ctx%d_d));  call hipCheck(hipFree(ctx%d_p))
+    call hipCheck(hipFree(ctx%d_hp)); call hipCheck(hipFree(ctx%d_r))
+    call hipCheck(hipFree(ctx%d_xf)); call hipCheck(hipFree(ctx%d_lbf)); call hipCheck(hipFree(ctx%d_ubf))
+    call hipCheck(hipFree(ctx%d_lindf)); call hipCheck(hipFree(ctx%d_uindf))
+    call hipCheck(hipFree(ctx%d_part)); call hipCheck(hipFree(ctx%d_cnt)); call hipCheck(hipFree(ctx%d_red))
+    deallocate(ctx%xf, ctx%lbf, ctx%ubf, ctx%lindf, ctx%uindf)
+  end subroutine cgm_gpu_free
 
-        call copy_hessian_to_gpu(ctx, n, lssit_obj%hne, lssit_obj%hval, lssit_obj%hrow, lssit_obj%hcol)
+  ! Mesma interface do cgm original, trocando lssit por ctx. Antes de chamar e preciso ter
+  ! feito hess_csr_update(ctx%h, ...) para a face e os valores atuais (substitui preparehv).
+  subroutine cgm_gpu(ctx, n, nfr, ifr, x, lind, lbnd, uind, ubnd, g, delta, eps, maxit, &
+                     precond, d, iter, iprint, ierr, cginfo)
+    type(cgm_gpu_ctx), intent(inout), target :: ctx
+    integer, intent(in) :: n, nfr, maxit, iprint
+    integer, intent(out) :: iter, ierr, cginfo
+    real(kind=8), intent(in) :: delta, eps
+    logical, intent(in) :: precond
+    logical, intent(in) :: lind(n), uind(n)
+    integer, intent(in) :: ifr(nfr)
+    real(kind=8), intent(in), target :: x(n), g(nfr), lbnd(n), ubnd(n)
+    real(kind=8), intent(out), target :: d(n)
 
-        allocate(lind_int(n), uind_int(n))
-        where (lind)
-           lind_int = 1
-        elsewhere
-           lind_int = 0
-        end where
-        
-        where (uind)
-           uind_int = 1
-        elsewhere
-           uind_int = 0
-        end where
-        
-        call hipCheck(hipMemcpy(ctx%d_x, c_loc(x), n*8_c_size_t, hipMemcpyHostToDevice))
-        call hipCheck(hipMemcpy(ctx%d_g, c_loc(g), nfr*8_c_size_t, hipMemcpyHostToDevice))
-        call hipCheck(hipMemcpy(ctx%d_x_lb, c_loc(lbnd), n*8_c_size_t, hipMemcpyHostToDevice))
-        call hipCheck(hipMemcpy(ctx%d_x_ub, c_loc(ubnd), n*8_c_size_t, hipMemcpyHostToDevice))
-        
-        call hipCheck(hipMemcpy(ctx%d_lind, c_loc(lind_int), n*4_c_size_t, hipMemcpyHostToDevice))
-        call hipCheck(hipMemcpy(ctx%d_uind, c_loc(uind_int), n*4_c_size_t, hipMemcpyHostToDevice))
-        call hipCheck(hipMemcpy(ctx%d_ifr, c_loc(ifr), nfr*4_c_size_t, hipMemcpyHostToDevice))
-        
-        call hipCheck(hipMemcpy(ctx%d_r, c_loc(g), nfr*8_c_size_t, hipMemcpyHostToDevice))
-        call hipCheck(hipMemset(ctx%d_d, 0, nfr*8_c_size_t))
-        
-        call hipblasCheck(hipblasDotEx(ctx%hblas_handle, nfr, ctx%d_r, HIP_R_64F, 1, &
-                                       ctx%d_r, HIP_R_64F, 1, ctx%d_dot, HIP_R_64F, HIP_R_64F))
-        call hipCheck(hipMemcpy(c_loc(rnorm2), ctx%d_dot, 8_c_size_t, hipMemcpyDeviceToHost))
-        
-        call hipblasCheck(hipblasDotEx(ctx%hblas_handle, nfr, ctx%d_g, HIP_R_64F, 1, &
-                                       ctx%d_g, HIP_R_64F, 1, ctx%d_dot, HIP_R_64F, HIP_R_64F))
-        call hipCheck(hipMemcpy(c_loc(gnorm2), ctx%d_dot, 8_c_size_t, hipMemcpyDeviceToHost))
-        
-        ztr = rnorm2
-        ztrprev = ztr
+    logical :: restarted
+    integer :: i, j, itnqmp, itertmp, sgn, sgnprev
+    real(kind=8) :: alpha, amax, abox, bbeta, coef, currprog, bestprog, dnorm2, gnorm2, gtd, gtp
+    real(kind=8) :: pnorm2, ptd, pthp, ptr, ptr_raw, q, qprev, rnorm2, ztr, ztrprev
+    real(c_double), target :: red(8)
 
-100     continue
-        if ( iter .ne. 0 .and. &
-            ( ( rnorm2 .le. eps * eps * gnorm2 .and. iter .ge. 4 ) .or. &
-            ( rnorm2 .le. macheps ) ) ) then
-            cginfo = 0; return
+    ierr = 0
+    if (precond) stop 'cgm_gpu: precondicionador ainda nao implementado (etapa 4)'
+    if (nfr /= ctx%h%nfr) stop 'cgm_gpu: nfr difere da face da Hessiana (faltou hess_csr_update?)'
+
+    ! --- dados por-chamada: compactados por ifr (host) e enviados uma vez ---
+    do i = 1, nfr
+      j = ifr(i)
+      ctx%xf(i) = x(j);  ctx%lbf(i) = lbnd(j);  ctx%ubf(i) = ubnd(j)
+      ctx%lindf(i) = merge(1, 0, lind(j));  ctx%uindf(i) = merge(1, 0, uind(j))
+    end do
+    call hipCheck(hipMemcpy(ctx%d_xf,  c_loc(ctx%xf),  nfr * 8_c_size_t, hipMemcpyHostToDevice))
+    call hipCheck(hipMemcpy(ctx%d_lbf, c_loc(ctx%lbf), nfr * 8_c_size_t, hipMemcpyHostToDevice))
+    call hipCheck(hipMemcpy(ctx%d_ubf, c_loc(ctx%ubf), nfr * 8_c_size_t, hipMemcpyHostToDevice))
+    call hipCheck(hipMemcpy(ctx%d_lindf, c_loc(ctx%lindf), nfr * 4_c_size_t, hipMemcpyHostToDevice))
+    call hipCheck(hipMemcpy(ctx%d_uindf, c_loc(ctx%uindf), nfr * 4_c_size_t, hipMemcpyHostToDevice))
+    call hipCheck(hipMemcpy(ctx%d_g, c_loc(g), nfr * 8_c_size_t, hipMemcpyHostToDevice))
+
+    gnorm2 = dot_product(g(1:nfr), g(1:nfr))
+
+    restarted = .false.
+    itertmp = 0
+
+    outer: do        ! "001 continue" do original: reinicio sem precondicionador
+      iter = 0;  itnqmp = 0
+      qprev = lrgstreal;  bestprog = 0.0d0
+      q = 0.0d0;  gtd = 0.0d0;  dnorm2 = 0.0d0
+      rnorm2 = gnorm2;  ztr = 0.0d0;  ztrprev = 0.0d0
+      sgnprev = 1
+      call hipCheck(hipMemcpy(ctx%d_r, ctx%d_g, nfr * 8_c_size_t, hipMemcpyDeviceToDevice))
+      call hipCheck(hipMemset(ctx%d_d, 0, nfr * 8_c_size_t))
+      call hipCheck(hipMemset(ctx%d_p, 0, nfr * 8_c_size_t))
+
+      if (iprint >= 2) write(*, 984) iter, sqrt(rnorm2), sqrt(dnorm2), q
+
+      inner: do
+        ! ---------------- criterios de parada ----------------
+        if (iter /= 0 .and. ((rnorm2 <= eps * eps * gnorm2 .and. iter >= 4) .or. rnorm2 <= macheps)) then
+          cginfo = 0;  exit inner
+        end if
+        if (iter >= max(4, maxit)) then
+          cginfo = 8;  exit inner
         end if
 
-        if ( iter .ge. max(4, maxit) ) then
-            cginfo = 8; return
-        end if
-
-        call hipCheck(hipMemcpy(ctx%d_z, ctx%d_r, nfr*8_c_size_t, hipMemcpyDeviceToDevice))
-        
-        if ( iter .eq. 0 ) then
-            call hipCheck(hipMemcpy(ctx%d_p, ctx%d_r, nfr*8_c_size_t, hipMemcpyDeviceToDevice))
-            call launch_update_p_vector(int(nfr, c_int), ctx%d_p, ctx%d_z, 0.0_c_double)
+        ! ---------------- z (precondicionador) ----------------
+        if (.not. precond .or. restarted) then
+          ztrprev = ztr
+          ztr = rnorm2
         else
-            bbeta = ztr / ztrprev
-            call launch_update_p_vector(int(nfr, c_int), ctx%d_p, ctx%d_z, real(bbeta, c_double))
+          stop 'cgm_gpu: ramo com precondicionador (etapa 4)'
         end if
 
-        call hipblasCheck(hipblasDotEx(ctx%hblas_handle, nfr, ctx%d_p, HIP_R_64F, 1, &
-                                       ctx%d_r, HIP_R_64F, 1, ctx%d_dot, HIP_R_64F, HIP_R_64F))
-        call hipCheck(hipMemcpy(c_loc(ptr), ctx%d_dot, 8_c_size_t, hipMemcpyDeviceToHost))
-        
-        if ( ptr .gt. 0.0d0 ) then
-            call launch_update_p_vector(int(nfr, c_int), ctx%d_p, ctx%d_z, 0.0_c_double)
-            ptr = -ptr
-        end if
-
-        call hs_check(hs_spmv(ctx%hsparse_handle, HS_OP_N, c_loc(alpha_one), ctx%mat_h, ctx%vec_p, &
-                      c_loc(alpha_zero), ctx%vec_hp, HS_R_64F, HS_SPMV_ALG_DEFAULT, ctx%d_buf), "SpMV")
-        
-        call hipblasCheck(hipblasDotEx(ctx%hblas_handle, nfr, ctx%d_p, HIP_R_64F, 1, &
-                                       ctx%d_hp, HIP_R_64F, 1, ctx%d_dot, HIP_R_64F, HIP_R_64F))
-        call hipCheck(hipMemcpy(c_loc(pthp), ctx%d_dot, 8_c_size_t, hipMemcpyDeviceToHost))
-
-        ! Passando delta por valor
-        call launch_compute_amax_abox(int(nfr, c_int), delta, ctx%d_p, ctx%d_d, &
-                                       ctx%d_x, ctx%d_x_lb, ctx%d_x_ub, ctx%d_lind, ctx%d_uind, &
-                                       ctx%d_ifr, ctx%d_amax, ctx%d_abox)
-        call hipCheck(hipMemcpy(c_loc(amax), ctx%d_amax, 8_c_size_t, hipMemcpyDeviceToHost))
-        call hipCheck(hipMemcpy(c_loc(abox), ctx%d_abox, 8_c_size_t, hipMemcpyDeviceToHost))
-
-        if ( pthp .gt. 0.0d0 ) then
-            alpha = min( amax, ztr / pthp )
-        else if ( iter .eq. 0 ) then
-            alpha = amax
+        ! ---------------- direcao: p = -z + beta p ----------------
+        if (iter == 0) then
+          coef = 0.0d0
         else
-            cginfo = 7; return
+          bbeta = ztr / ztrprev
+          coef = bbeta * real(sgnprev, 8)      ! p anterior foi (talvez) invertido
+        end if
+        call launch_cgm_update_p(int(nfr, c_int), coef, ctx%d_r, ctx%d_p)
+
+        ! ---------------- hp = H p  e reducoes ----------------
+        call hess_csr_spmv(ctx%h)
+        call launch_cgm_dots1(int(nfr, c_int), delta, ctx%d_p, ctx%d_hp, ctx%d_d, ctx%d_g, ctx%d_r, &
+                              ctx%d_part, ctx%d_cnt, ctx%d_red)
+        call hipCheck(hipMemcpy(c_loc(red), ctx%d_red, 7 * 8_c_size_t, hipMemcpyDeviceToHost))
+
+        ptr_raw = red(4)
+        pnorm2  = red(5)
+        if (ptr_raw > 0.0d0) then          ! original: p = -p, ptr = -ptr
+          sgn = -1
+        else
+          sgn = 1
+        end if
+        ptr  = -abs(ptr_raw)
+        pthp = red(1)                      ! invariante ao sinal
+        ptd  = real(sgn, 8) * red(2)
+        gtp  = real(sgn, 8) * red(3)
+        if (sgn > 0) then
+          amax = red(6)
+        else
+          amax = red(7)
         end if
 
-        ! Passando alpha por valor
-        call launch_update_d_r(int(nfr, c_int), alpha, ctx%d_p, ctx%d_hp, ctx%d_d, ctx%d_r)
-        
-        call hipblasCheck(hipblasDotEx(ctx%hblas_handle, nfr, ctx%d_r, HIP_R_64F, 1, &
-                                       ctx%d_r, HIP_R_64F, 1, ctx%d_dot, HIP_R_64F, HIP_R_64F))
-        call hipCheck(hipMemcpy(c_loc(rnorm2), ctx%d_dot, 8_c_size_t, hipMemcpyDeviceToHost))
+        ! ---------------- passo ----------------
+        if (pthp > 0.0d0) then
+          alpha = min(amax, ztr / pthp)
+        else if (iter == 0) then
+          alpha = amax
+        else
+          cginfo = 7;  exit inner
+        end if
 
-        if ( alpha .eq. amax ) then; cginfo = 1; return; end if
-        if ( abox .le. 0.1d0 ) then; cginfo = 5; return; end if
+        ! ---------------- condicao de angulo ----------------
+        gtd = gtd + alpha * gtp
+        dnorm2 = dnorm2 + alpha * alpha * pnorm2 + 2.0d0 * alpha * ptd
 
-        ztrprev = ztr
-        ztr = rnorm2
+        if (gtd > 0.0d0 .or. (gtd * gtd < 1.0d-12 * gnorm2 * dnorm2)) then
+          if (precond .and. .not. restarted .and. iter == 0) then
+            restarted = .true.
+            itertmp = iter
+            cycle outer
+          end if
+          cginfo = 3;  exit inner
+        end if
+
+        ! ---------------- modelo quadratico ----------------
+        qprev = q
+        q = q + 0.5d0 * alpha * alpha * pthp + alpha * ptr
+
+        ! ---------------- d, r, e testes que dependem do novo d ----------------
+        coef = real(sgn, 8) * alpha
+        call launch_cgm_update(int(nfr, c_int), coef, macheps, ctx%d_p, ctx%d_hp, ctx%d_d, ctx%d_r, &
+                               ctx%d_xf, ctx%d_lbf, ctx%d_ubf, ctx%d_lindf, ctx%d_uindf, &
+                               ctx%d_part, ctx%d_cnt, ctx%d_red)
+        call hipCheck(hipMemcpy(c_loc(red), ctx%d_red, 3 * 8_c_size_t, hipMemcpyDeviceToHost))
+        rnorm2 = red(1)
+        abox   = red(3)
+
         iter = iter + 1
-        goto 100
 
-999     continue
-        allocate(d_gpu(n))
-        call hipCheck(hipMemcpy(c_loc(d_gpu), ctx%d_d, nfr*8_c_size_t, hipMemcpyDeviceToHost))
-        d(1:nfr) = d_gpu(1:nfr)
-        deallocate(d_gpu, lind_int, uind_int)
-        
-        ierr = 0
-    end subroutine cgm_gpu
-end module
+        if (iprint >= 2) write(*, 984) iter, sqrt(rnorm2), sqrt(dnorm2), q
+
+        if (alpha == amax) then                 ! fronteira da regiao de confianca
+          cginfo = 1;  exit inner
+        end if
+        if (abox <= 0.1d0) then                 ! pouca proporcao util
+          cginfo = 5;  exit inner
+        end if
+        if (red(2) == 0.0d0) then               ! samep: iterados muito proximos
+          cginfo = 6;  exit inner
+        end if
+
+        currprog = qprev - q
+        bestprog = max(currprog, bestprog)
+        if (currprog <= epsnqmp * bestprog) then
+          itnqmp = itnqmp + 1
+          if (itnqmp >= maxcgitnp) then
+            cginfo = 4;  exit inner
+          end if
+        else
+          itnqmp = 0
+        end if
+
+        sgnprev = sgn
+      end do inner
+      exit outer
+    end do outer
+
+    iter = iter + itertmp
+    if (iprint >= 1) write(*,*) 'Exit cgm_gpu with cginfo = ', cginfo
+
+    call hipCheck(hipMemcpy(c_loc(d), ctx%d_d, nfr * 8_c_size_t, hipMemcpyDeviceToHost))
+
+984 format(5X, 'CG iter = ', I7, ' rnorm = ', 1P, D10.4, ' dnorm = ', 1P, D10.4, ' q = ', 1P, D11.4)
+  end subroutine cgm_gpu
+
+end module cgm_gpu_mod

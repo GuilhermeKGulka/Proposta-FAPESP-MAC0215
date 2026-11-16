@@ -77,7 +77,7 @@ program gencanma
     eps         =    1.0d-08
     maxit       =    huge(1)
     extallowed  =     .true.
-    precond     =     .true.
+    precond     =     .false.
     ! truehp = .true.  uses the true Hessian (evalh) in the Newton-CG.
     ! truehp = .false. replaces it by a secant approximation that needs
     ! only function and gradient values (no evalh call is made).
