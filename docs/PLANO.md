@@ -66,7 +66,7 @@ Todos em `gencan-cg-standalone-gpu/` (fontes em `sources/`, testes em `tests/`).
 | `sources/gencan_gpu.f90` | cópia do `gencan.f90` original com mudanças mínimas | Módulo `modgencan_gpu`. Versão corrigida entregue. Ver §4.4. |
 | `sources/cutestma_gpu.f90` | cópia do `cutestma.f90` | Só muda `use modgencan_gpu, only: gencan, genunc`. |
 | `tests/test_hess_csr.f90` | novo | Etapa 1: CSR/SpMV contra `preparehv`+`computehv` reais. |
-| `tests/test_cgm_gpu.f90` | novo | Etapas 3–4: `cgm_gpu` contra `cgm` original em cenários sintéticos. Hoje tem **6 cenários**; faltam os 7 e 8 (precondicionador). |
+| `tests/test_cgm_gpu.f90` | novo | Etapas 3–4: `cgm_gpu` contra `cgm` original em cenários sintéticos. Tem **9 cenários** (7–9 com precondicionador) e imprime OK/FALHOU por cenário. |
 | `run-cutest-gpu.sh` | escrito na conversa | **Já tem o conteúdo novo** (conferido em 21/11): roda `cutestma_cpu` e `cutestma_gpu` por problema → `table_cpu.txt`/`table_gpu.txt`, retomável via `done_gencan.txt`. Não existe `run_cutest_gpu.sh`. |
 | `run-tests.sh` | escrito na conversa | Compila e roda `test_hess_csr` e `test_cgm_gpu`. Funciona: o alvo `test_hess_csr` voltou ao `CMakeLists.txt` em 21/11 (tinha sido removido em bff320c). |
 | `run-cutest.sh`, `compile.sh` | tentativa antiga | Obsoletos: usam alvos `cutestma`/`toyprob`, que não existem mais. `README.md` também está desatualizado. |
@@ -155,9 +155,9 @@ cutestma_gpu : sources/cutestma_gpu.f90 + ${DECODED_SRCS} + ${CUTEST_LIB}  (liga
 
 | Etapa | Teste | Resultado |
 |---|---|---|
-| 1. COO→CSR + SpMV | `test_hess_csr` | OK. Na fase 5 (21/11): erro relativo 0 a 1.5e-16 nos 5 trials. Fase 4: 9e-17 a 2.5e-16. Obs.: trial 3 mostrou `padrao refeito=T` (esperado `F`); provavelmente `hess_csr_invalidate` foi posto nesse teste também. O caminho "mesmo padrão, valores novos" é exercitado pelos problemas CUTEst irrestritos. |
-| 3. `cgm_gpu` sem precond | `test_cgm_gpu` (6 cenários) | OK: `iter` e `cginfo` idênticos à CPU. Erro de `d` de 2e-16 a 1.2e-15 na fase 4 e de 0 a 4e-16 na fase 5 (21/11). Requer `call hess_csr_invalidate(ctx%h)` antes de cada `hess_csr_update` no teste. |
-| 4. precondicionador | `test_cgm_gpu` cenários 7–8 | **Ainda não escritos.** Só validado indiretamente pelo CUTEst. |
+| 1. COO→CSR + SpMV | `test_hess_csr` | OK. Na fase 5 (21/11): erro relativo 0 a 1.5e-16 nos 5 trials. Fase 4: 9e-17 a 2.5e-16. Desde 21/11 o teste roda sem `hess_csr_invalidate` (o padrão COO é fixo, como no CUTEst) e confere o `changed` esperado: T, T, **F**, T, T. O trial 3 cobre "mesmo padrão, valores novos" (só o scatter): 5/5 OK. |
+| 3. `cgm_gpu` sem precond | `test_cgm_gpu` cenários 1–6 | OK: `iter` e `cginfo` idênticos à CPU. Erro de `d` de 2e-16 a 1.2e-15 na fase 4 e de 0 a 1.5e-15 na fase 5 (21/11). Requer `call hess_csr_invalidate(ctx%h)` antes de cada `hess_csr_update` no teste (COO novo a cada cenário). |
+| 4. precondicionador | `test_cgm_gpu` cenários 7–9 | OK (21/11): 7 = SPD com correção BFGS (`sameface = .true.`), 8 = bounds próximos com precond, 9 = SPD sem correção (`sameface = .false.`). `iter` e `cginfo` idênticos, erro de `d` ≤ 2.5e-16. Critério do teste: mesmo `iter`, mesmo `cginfo`, erro relativo de `d` ≤ 1e-12. Total: 9/9 OK. Obs.: a semente aleatória não é fixada, então `nfr` e `iter` variam entre execuções. |
 | Integração Gencan | `cutestma_cpu` vs `cutestma_gpu`, 7 problemas | `iter`, `fcnt`, `hcnt` idênticos; `gcnt` da GPU = CPU + 1; `f` difere no último dígito; **`BQPGAUSS`: 97 (CPU) vs 118 (GPU) iterações**. |
 | 5. fase 5 | todos os anteriores | **Validada em 21/11/2026** (detalhes abaixo). Duas correções foram necessárias só para compilar: o atributo `target` num componente de tipo em `hess_csr.f90`, e o argumento `ls` que faltava na chamada de `cgm_gpu` em `test_cgm_gpu.f90`. Resultados em `gencan-cg-standalone-gpu/resultados/table_{cpu,gpu}_fase5_{nopre,pre}.txt`. |
 
@@ -203,12 +203,12 @@ Controle: rodei o `cgm` da **CPU** com os produtos internos somados em ordem rev
 
 ### 7.1 Imediato (validação das fases 4–5)
 
-Situação em 21/11/2026: os itens 1 e 3 estão **feitos**, e a fase 5 está validada (§6). Faltam os itens 2 e 4, que reforçam os testes sintéticos, mas não bloqueiam a fase 6.
+Situação em 21/11/2026: **todos os itens do §7.1 estão feitos**, e a fase 5 está validada (§6). O próximo passo é planejar a fase 6 (§7.5).
 
 1. **[FEITO]** **Igualar `precond`** nos dois `cutestma` e rodar duas rodadas: `false/false` e `true/true` (`grep -n "precond *=" sources/cutestma*.f90`). Conferir `gcnt` iguais e `BQPGAUSS`. Se ainda divergir com `precond` igual: rodar com `iprint = 3` dos dois lados e comparar a trajetória.
-2. **Completar `tests/test_cgm_gpu.f90` com 8 cenários**: 7 = SPD com precond, 8 = SPD com bounds e precond. Para cada cenário com precond: sortear `s`, calcular `y = H s` (H simétrica a partir do COO), `sty`, `sts`, chamar `comphpre(n, s, y, sty, sts, 1d-16, 1d16, .true., inform, ls)` antes do `cgm`/`cgm_gpu`; passar `prec(s)` no lugar de `.false.` e `ls` no final da chamada `cgm_gpu`. `nscen = 8`, novo array `prec`.
+2. **[FEITO, com 9 cenários]** **Completar `tests/test_cgm_gpu.f90` com 8 cenários**: 7 = SPD com precond, 8 = SPD com bounds e precond. Para cada cenário com precond: sortear `s`, calcular `y = H s` (H simétrica a partir do COO), `sty`, `sts`, chamar `comphpre(n, s, y, sty, sts, 1d-16, 1d16, .true., inform, ls)` antes do `cgm`/`cgm_gpu`; passar `prec(s)` no lugar de `.false.` e `ls` no final da chamada `cgm_gpu`. `nscen = 8`, novo array `prec`.
 3. **[FEITO]** **Validar a fase 5** (arquivos já aplicados em 3e3f3d6, base da fase 4 já guardada em `resultados/table_*_fase4.txt`). Antes, devolver o alvo `test_hess_csr` ao `CMakeLists.txt` para que `run-tests.sh` volte a funcionar. Rodar `run-tests.sh` e o CUTEst; exigir os mesmos `iter`/`cginfo`. Diferença de 1 em `iter` ⇒ suspeitar de FMA no `beta` do kernel (decidir: aceitar ou calcular `ztr`/`beta` de forma idêntica ao host).
-4. Corrigir o teste `test_hess_csr` para cobrir também "mesmo padrão, valores novos" (trial 3 sem `invalidate`).
+4. **[FEITO]** Corrigir o teste `test_hess_csr` para cobrir também "mesmo padrão, valores novos" (trial 3 sem `invalidate`).
 
 ### 7.2 Medição justa de desempenho
 

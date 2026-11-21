@@ -17,6 +17,9 @@ program test_hess_csr
   type(hess_csr_type) :: h
   type(lssit_type) :: ls
   real(8) :: frac(ntrial) = [1.0d0, 0.7d0, 0.7d0, 0.3d0, 0.0d0]   ! trial 3 repete a face do 2
+  ! padrao COO fixo em todos os trials (como no CUTEst): so a face decide se o CSR e refeito
+  logical, parameter :: chg_esp(ntrial) = [.true., .true., .false., .true., .true.]
+  integer :: nfalhas = 0
 
   call hipCheck(hipMalloc(d_x, n * 8_c_size_t))
   call hipCheck(hipMalloc(d_y, n * 8_c_size_t))
@@ -55,7 +58,7 @@ program test_hess_csr
     end do
 
     ! --- GPU ---
-    call hess_csr_invalidate(h)
+    ! sem hess_csr_invalidate: o trial 3 exercita "mesmo padrao, valores novos" (so scatter)
     call hess_csr_update(h, hne, hrow, hcol, hval, frvar, changed)
     call hipCheck(hipMemcpy(d_x, c_loc(v), n * 8_c_size_t, hipMemcpyHostToDevice))
     call hess_csr_spmv(h)
@@ -77,8 +80,11 @@ program test_hess_csr
       err = maxval(abs(hv_gpu(1:nfr) - hv_cpu(1:nfr)))
       ref = max(1.0d0, maxval(abs(hv_cpu(1:nfr))))
     end if
-    write(*,'(A,I0,A,I5,A,I7,A,L1,A,F9.3,A,ES10.2)') 'trial ', t, '  nfr=', nfr, '  nnz=', h%nnz, &
-          '  padrao refeito=', changed, '  prep(ms)=', h%t_prep_ms, '  erro rel=', err / ref
+    write(*,'(A,I0,A,I5,A,I7,A,L1,A,L1,A,F9.3,A,ES10.2,A)') 'trial ', t, '  nfr=', nfr, '  nnz=', h%nnz, &
+          '  padrao refeito=', changed, ' (esperado ', chg_esp(t), ')  prep(ms)=', h%t_prep_ms, &
+          '  erro rel=', err / ref, merge('  OK    ', '  FALHOU', &
+          (changed .eqv. chg_esp(t)) .and. err / ref <= 1.0d-14)
+    if (.not. ((changed .eqv. chg_esp(t)) .and. err / ref <= 1.0d-14)) nfalhas = nfalhas + 1
 
     call lssitend(ls)
     deallocate(ifr, v, hv_gpu, hv_cpu, x, g)
@@ -86,6 +92,7 @@ program test_hess_csr
 
   call hess_csr_free(h)
   call hipCheck(hipFree(d_x));  call hipCheck(hipFree(d_y))
+  write(*,'(A,I0,A,I0)') 'test_hess_csr: falhas = ', nfalhas, ' de ', ntrial
 
 contains
 
