@@ -10,6 +10,14 @@ module hess_csr_mod
 
   real(c_double), target, save :: one = 1.0d0, zero = 0.0d0
 
+  interface
+    subroutine launch_scatter(hne, v, p1, p2, val) bind(C, name="launch_scatter")
+      import :: c_int, c_ptr
+      integer(c_int), value :: hne
+      type(c_ptr), value :: v, p1, p2, val
+    end subroutine
+  end interface
+
   type :: hess_csr_type
     integer :: n = 0, hnnzmax = 0, nfr = 0, nnz = 0, hne = 0
     logical :: has_face = .false., empty = .true., spmv_ready = .false., do_prep = .true.
@@ -17,7 +25,8 @@ module hess_csr_mod
 
     ! host
     logical, allocatable :: frvar_prev(:)
-    integer, allocatable :: renum(:), rcount(:), cur(:), pos1(:), pos2(:)
+    integer, allocatable :: renum(:), rcount(:), cur(:)
+    integer, allocatable, target :: pos1(:), pos2(:)
     integer(c_int), allocatable :: row_ptr(:), col(:)
     real(c_double), allocatable :: val(:)
 
@@ -25,6 +34,7 @@ module hess_csr_mod
     type(c_ptr) :: handle   = c_null_ptr
     type(c_ptr) :: d_row_ptr = c_null_ptr, d_col = c_null_ptr, d_val = c_null_ptr
     type(c_ptr) :: d_x = c_null_ptr, d_y = c_null_ptr
+    type(c_ptr) :: d_hcoo = c_null_ptr, d_pos1 = c_null_ptr, d_pos2 = c_null_ptr
     type(c_ptr) :: mat = c_null_ptr, vx = c_null_ptr, vy = c_null_ptr, d_buf = c_null_ptr
   end type hess_csr_type
 
@@ -46,6 +56,9 @@ contains
     call hipCheck(hipMalloc(h%d_row_ptr, (n+1) * 4_c_size_t))
     call hipCheck(hipMalloc(h%d_col, 2 * hnnzmax * 4_c_size_t))
     call hipCheck(hipMalloc(h%d_val, 2 * hnnzmax * 8_c_size_t))
+    call hipCheck(hipMalloc(h%d_hcoo, hnnzmax * 8_c_size_t))
+    call hipCheck(hipMalloc(h%d_pos1, hnnzmax * 4_c_size_t))
+    call hipCheck(hipMalloc(h%d_pos2, hnnzmax * 4_c_size_t))
     call hipsparseCheck(hipsparseCreate(h%handle))
   end subroutine hess_csr_init
 
@@ -55,11 +68,9 @@ contains
     type(hess_csr_type), intent(inout), target :: h
     integer, intent(in) :: hne
     integer, intent(in) :: hrow(:), hcol(:)
-    real(8), intent(in) :: hval(:)
+    real(8), intent(in), target, contiguous :: hval(:)
     logical, intent(in) :: frvar(:)
     logical, intent(out) :: changed
-
-    integer :: e
 
     if (hne > h%hnnzmax) stop 'hess_csr_update: hne > hnnzmax'
 
@@ -70,20 +81,19 @@ contains
       call build_pattern(h, hne, hrow, hcol, frvar)
     end if
 
-    ! scatter dos valores (so os valores mudam a cada iteracao)
-    do e = 1, hne
-      if (h%pos1(e) == 0) cycle
-      h%val(h%pos1(e)) = hval(e)
-      if (h%pos2(e) > 0) h%val(h%pos2(e)) = hval(e)
-    end do
-
     if (changed .and. h%nfr > 0) then
       call hipCheck(hipMemcpy(h%d_row_ptr, c_loc(h%row_ptr), (h%nfr+1) * 4_c_size_t, hipMemcpyHostToDevice))
       if (h%nnz > 0) &
         call hipCheck(hipMemcpy(h%d_col, c_loc(h%col), h%nnz * 4_c_size_t, hipMemcpyHostToDevice))
     end if
-    if (h%nnz > 0) &
-      call hipCheck(hipMemcpy(h%d_val, c_loc(h%val), h%nnz * 8_c_size_t, hipMemcpyHostToDevice))
+    if (changed .and. h%nfr > 0 .and. hne > 0) then      ! posicoes COO -> CSR (so quando o padrao muda)
+      call hipCheck(hipMemcpy(h%d_pos1, c_loc(h%pos1), hne * 4_c_size_t, hipMemcpyHostToDevice))
+      call hipCheck(hipMemcpy(h%d_pos2, c_loc(h%pos2), hne * 4_c_size_t, hipMemcpyHostToDevice))
+    end if
+    if (h%nnz > 0 .and. hne > 0) then                    ! valores: COO -> GPU, scatter em kernel
+      call hipCheck(hipMemcpy(h%d_hcoo, c_loc(hval), hne * 8_c_size_t, hipMemcpyHostToDevice))
+      call launch_scatter(int(hne, c_int), h%d_hcoo, h%d_pos1, h%d_pos2, h%d_val)
+    end if
 
     if (changed) call setup_spmv(h)
   end subroutine hess_csr_update
@@ -205,6 +215,9 @@ contains
     call hipCheck(hipFree(h%d_row_ptr))
     call hipCheck(hipFree(h%d_col))
     call hipCheck(hipFree(h%d_val))
+    call hipCheck(hipFree(h%d_hcoo))
+    call hipCheck(hipFree(h%d_pos1))
+    call hipCheck(hipFree(h%d_pos2))
     call hipsparseCheck(hipsparseDestroy(h%handle))
   end subroutine hess_csr_free
 
