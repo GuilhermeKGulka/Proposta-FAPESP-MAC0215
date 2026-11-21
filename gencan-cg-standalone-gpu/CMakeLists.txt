@@ -97,28 +97,6 @@ add_library(kernels STATIC ${KERNEL_OBJ})
 set_target_properties(kernels PROPERTIES LINKER_LANGUAGE Fortran)
 target_link_libraries(kernels PUBLIC hipfort_backend stdc++)
 
-# ---- CPU original (referencia) ----
-add_library(gencan_cpu STATIC sources/lssit.f90 sources/cgm.f90)
-
-# ---- GPU ----
-add_library(hsgen STATIC sources/hipsparse_generic.f90)
-target_link_libraries(hsgen PUBLIC hipfort_backend)
-add_library(gpucore STATIC sources/hess_csr.f90 sources/cgm_gpu.f90)
-target_link_libraries(gpucore PUBLIC hsgen hipfort_backend)
-
-add_executable(test_hess_csr tests/test_hess_csr.f90)
-target_link_libraries(test_hess_csr PRIVATE gpucore gencan_cpu kernels hsgen hipfort_backend)
-
-add_executable(test_cgm_gpu tests/test_cgm_gpu.f90)
-target_link_libraries(test_cgm_gpu PRIVATE gpucore gencan_cpu kernels hsgen hipfort_backend)
-
-add_library(gencan_gpu STATIC sources/gencan_gpu.f90)
-target_link_libraries(gencan_gpu PUBLIC gpucore gencan_cpu)
-
-add_executable(cutestma_gpu sources/cutestma_gpu.f90 sources/cutest_iface.f90 ${DECODED_SRCS})
-target_include_directories(cutestma_gpu PRIVATE "${CUTEST_MOD_DIR}")
-target_link_libraries(cutestma_gpu PRIVATE gencan_gpu gpucore kernels hsgen ${CUTEST_LIB} hipfort_backend)
-
 # ---- CUTEst: decodifica o problema (sifdecoder) e linka libcutest ----------
 # Requer o ambiente do CUTEst: source <raiz do repo>/env_cutest.sh
 foreach(v CUTEST SIFDECODE MASTSIF MYARCH)
@@ -159,3 +137,25 @@ set(DECODED_SRCS "${CMAKE_BINARY_DIR}/ELFUN.f" "${CMAKE_BINARY_DIR}/GROUP.f" "${
 if(EXISTS "${CMAKE_BINARY_DIR}/EXTER.f")
   list(APPEND DECODED_SRCS "${CMAKE_BINARY_DIR}/EXTER.f")
 endif()
+
+add_library(gencan_cpu STATIC sources/lssit.f90 sources/cgm.f90 sources/gencan.f90)   # referencia, inalterada
+
+add_library(hsgen STATIC sources/hipsparse_generic.f90)
+target_link_libraries(hsgen PUBLIC hipfort_backend)
+
+add_library(gpucore STATIC sources/hess_csr.f90 sources/cgm_gpu.f90)
+target_link_libraries(gpucore PUBLIC hsgen hipfort_backend gencan_cpu)   # cgm_gpu usa o modulo lssit
+
+add_library(gencan_gpu STATIC sources/gencan_gpu.f90)
+target_link_libraries(gencan_gpu PUBLIC gpucore)
+
+add_executable(test_cgm_gpu tests/test_cgm_gpu.f90)
+target_link_libraries(test_cgm_gpu PRIVATE gpucore gencan_cpu kernels hsgen hipfort_backend)
+
+add_executable(cutestma_cpu sources/cutestma.f90 ${DECODED_SRCS})
+target_include_directories(cutestma_cpu PRIVATE "${CUTEST_MOD_DIR}")
+target_link_libraries(cutestma_cpu PRIVATE gencan_cpu ${CUTEST_LIB})
+
+add_executable(cutestma_gpu sources/cutestma_gpu.f90 ${DECODED_SRCS})
+target_include_directories(cutestma_gpu PRIVATE "${CUTEST_MOD_DIR}")
+target_link_libraries(cutestma_gpu PRIVATE gencan_gpu gpucore kernels hsgen ${CUTEST_LIB} hipfort_backend)

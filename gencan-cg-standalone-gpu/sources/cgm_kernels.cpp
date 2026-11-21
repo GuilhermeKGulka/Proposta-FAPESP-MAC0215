@@ -8,7 +8,6 @@
 #define HIPCHK() do { hipError_t e_ = hipGetLastError(); if (e_ != hipSuccess) { \
   fprintf(stderr, "cgm_kernels: %s (%s:%d)\n", hipGetErrorString(e_), __FILE__, __LINE__); exit(1); } } while (0)
 
-// Reducao de bloco: NS somas e NM minimos por thread -> resultado na thread 0.
 template <int NS, int NM>
 __device__ __forceinline__ void block_reduce(double* s, double* m, double* sh) {
   const int t = threadIdx.x;
@@ -36,9 +35,7 @@ __device__ __forceinline__ void block_reduce(double* s, double* m, double* sh) {
   __syncthreads();
 }
 
-// Reducao de grade em um unico lancamento: o ultimo bloco a terminar faz a reducao final.
 // Saida: out[0..NS-1] = somas, out[NS..NS+NM-1] = minimos.
-// O contador (unsigned, zerado na criacao) se reinicia sozinho via atomicInc.
 template <int NS, int NM>
 __device__ void grid_finish(double* s, double* m, double* sh,
                             double* part, unsigned int* counter, double* out) {
@@ -55,7 +52,7 @@ __device__ void grid_finish(double* s, double* m, double* sh,
   __syncthreads();
   if (!last) return;
 
-  volatile const double* vp = part;   // evita ler linhas de cache antigas
+  volatile const double* vp = part;
   for (int k = 0; k < NS; k++) s[k] = 0.0;
   for (int k = 0; k < NM; k++) m[k] = DBL_MAX;
   for (int b = threadIdx.x; b < (int)gridDim.x; b += BS) {
@@ -69,15 +66,35 @@ __device__ void grid_finish(double* s, double* m, double* sh,
   }
 }
 
-// p = -r + coef * p     (z = r, sem precondicionador)
+// p = -r + coef p                       (z = r)
 __global__ __launch_bounds__(BS) void k_update_p(int n, double coef, const double* r, double* p) {
   for (int i = blockIdx.x * BS + threadIdx.x; i < n; i += gridDim.x * BS)
     p[i] = -r[i] + coef * p[i];
 }
 
-// Reducoes que dependem so de (p, hp, d, g, r):
-//  out[0]=p.hp  out[1]=p.d  out[2]=g.p  out[3]=p.r  out[4]=p.p
-//  out[5]=amax para +p   out[6]=amax para -p   (o host escolhe conforme o sinal de p.r)
+// p = -z + coef p,  z = r/D + c1 u + c2 s     (precondicionador)
+__global__ __launch_bounds__(BS) void k_update_p_pre(int n, double coef, double c1, double c2,
+    const double* r, const double* D, const double* u, const double* s, double* p) {
+  for (int i = blockIdx.x * BS + threadIdx.x; i < n; i += gridDim.x * BS)
+    p[i] = -(r[i] / D[i] + c1 * u[i] + c2 * s[i]) + coef * p[i];
+}
+
+// out[0]=sum r^2/D   out[1]=s.r   out[2]=u.r
+__global__ __launch_bounds__(BS) void k_dots0(int n, const double* r, const double* D,
+    const double* s, const double* u, double* part, unsigned int* counter, double* out) {
+  __shared__ double sh[3 * BS];
+  double sm[3] = {0, 0, 0};
+  double m[1] = {DBL_MAX};
+  for (int i = blockIdx.x * BS + threadIdx.x; i < n; i += gridDim.x * BS) {
+    const double ri = r[i];
+    sm[0] += ri * ri / D[i];
+    sm[1] += s[i] * ri;
+    sm[2] += u[i] * ri;
+  }
+  grid_finish<3, 0>(sm, m, sh, part, counter, out);
+}
+
+// out[0]=p.hp out[1]=p.d out[2]=g.p out[3]=p.r out[4]=p.p out[5]=amax(+p) out[6]=amax(-p)
 __global__ __launch_bounds__(BS) void k_dots1(int n, double delta,
     const double* p, const double* hp, const double* d, const double* g, const double* r,
     double* part, unsigned int* counter, double* out) {
@@ -102,15 +119,17 @@ __global__ __launch_bounds__(BS) void k_dots1(int n, double delta,
   grid_finish<5, 2>(s, m, sh, part, counter, out);
 }
 
-// d += c p ; r += c hp ; e reducoes sobre o NOVO d e o NOVO r:
-//  out[0]=r.r   out[1]=numero de i que violam "samep"   out[2]=abox
+// d += c p ; r += c hp ; sobre o NOVO d e NOVO r:
+// out[0]=r.r out[1]=#violacoes de samep out[2]=sum r^2/D out[3]=s.r out[4]=u.r out[5]=abox
+// (out[2..4] so se D != nullptr)
 __global__ __launch_bounds__(BS) void k_update(int n, double coef, double macheps,
     const double* p, const double* hp, double* d, double* r,
     const double* xf, const double* lbf, const double* ubf,
     const int* lindf, const int* uindf,
+    const double* D, const double* sv, const double* uv,
     double* part, unsigned int* counter, double* out) {
-  __shared__ double sh[3 * BS];
-  double s[2] = {0, 0};
+  __shared__ double sh[6 * BS];
+  double s[5] = {0, 0, 0, 0, 0};
   double m[1] = {DBL_MAX};
   for (int i = blockIdx.x * BS + threadIdx.x; i < n; i += gridDim.x * BS) {
     const double step = coef * p[i];
@@ -120,10 +139,15 @@ __global__ __launch_bounds__(BS) void k_update(int n, double coef, double machep
     r[i] = ri;
     s[0] += ri * ri;
     if (fabs(step) > macheps * fmax(1.0, fabs(di))) s[1] += 1.0;
+    if (D) {
+      s[2] += ri * ri / D[i];
+      s[3] += sv[i] * ri;
+      s[4] += uv[i] * ri;
+    }
     if (di > 0.0 && uindf[i])      m[0] = fmin(m[0], (ubf[i] - xf[i]) / di);
     else if (di < 0.0 && lindf[i]) m[0] = fmin(m[0], (lbf[i] - xf[i]) / di);
   }
-  grid_finish<2, 1>(s, m, sh, part, counter, out);
+  grid_finish<5, 1>(s, m, sh, part, counter, out);
 }
 
 static inline int nblocks(int n) {
@@ -138,6 +162,16 @@ void launch_cgm_update_p(int n, double coef, const double* r, double* p) {
   hipLaunchKernelGGL(k_update_p, dim3(nblocks(n)), dim3(BS), 0, 0, n, coef, r, p);
   HIPCHK();
 }
+void launch_cgm_update_p_pre(int n, double coef, double c1, double c2, const double* r,
+                             const double* D, const double* u, const double* s, double* p) {
+  hipLaunchKernelGGL(k_update_p_pre, dim3(nblocks(n)), dim3(BS), 0, 0, n, coef, c1, c2, r, D, u, s, p);
+  HIPCHK();
+}
+void launch_cgm_dots0(int n, const double* r, const double* D, const double* s, const double* u,
+                      double* part, unsigned int* counter, double* out) {
+  hipLaunchKernelGGL(k_dots0, dim3(nblocks(n)), dim3(BS), 0, 0, n, r, D, s, u, part, counter, out);
+  HIPCHK();
+}
 void launch_cgm_dots1(int n, double delta, const double* p, const double* hp, const double* d,
                       const double* g, const double* r,
                       double* part, unsigned int* counter, double* out) {
@@ -148,9 +182,11 @@ void launch_cgm_dots1(int n, double delta, const double* p, const double* hp, co
 void launch_cgm_update(int n, double coef, double macheps, const double* p, const double* hp,
                        double* d, double* r, const double* xf, const double* lbf, const double* ubf,
                        const int* lindf, const int* uindf,
+                       const double* D, const double* sv, const double* uv,
                        double* part, unsigned int* counter, double* out) {
   hipLaunchKernelGGL(k_update, dim3(nblocks(n)), dim3(BS), 0, 0,
-                     n, coef, macheps, p, hp, d, r, xf, lbf, ubf, lindf, uindf, part, counter, out);
+                     n, coef, macheps, p, hp, d, r, xf, lbf, ubf, lindf, uindf, D, sv, uv,
+                     part, counter, out);
   HIPCHK();
 }
 }

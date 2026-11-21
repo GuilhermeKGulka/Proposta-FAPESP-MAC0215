@@ -120,27 +120,19 @@ module modgencan_gpu
   
       ! LOCAL SCALARS
       type(lssit_type) :: lssit
-
       type(cgm_gpu_ctx) :: ctx
 
       ierr = 0
-
-      call lssitini(evalg,truehp,hnnzmax,0,n,0,0,lssit)
-      lssit%pdata = pdata
       if ( .not. truehp ) stop 'gencan_gpu: so truehp = .true.'
-      if ( precond )      stop 'gencan_gpu: precond = .true. ainda nao suportado'
-      call cgm_gpu_init(ctx, n, hnnzmax, .true.)
-      call genuncb(..., ctx)          ! novo argumento final
-      call cgm_gpu_free(ctx)
-      call lssitend(lssit)
-
       call lssitini(evalg,truehp,hnnzmax,0,n,0,0,lssit)
       lssit%pdata = pdata
+      call cgm_gpu_init(ctx, n, hnnzmax, .true.)
 
       call genuncb(evalf,evalg,evalh,truehp,n,x,f,g,gsupn,lssit,ftarget,eps, &
-           maxit,extallowed,precond,iter,ierr,istop,evalstp,tabline,pdata)
+           maxit,extallowed,precond,iter,ierr,istop,evalstp,tabline,pdata,ctx)
 
-      call lssitend(lssit) 
+      call cgm_gpu_free(ctx)
+      call lssitend(lssit)
 
     end subroutine genunc
   
@@ -148,7 +140,7 @@ module modgencan_gpu
     ! *****************************************************************
   
     subroutine genuncb(evalf,evalg,evalh,truehp,n,x,f,g,gsupn,lssit,ftarget, &
-         eps,maxit,extallowed,precond,iter,ierr,istop,evalstp,tabline,pdata)
+         eps,maxit,extallowed,precond,iter,ierr,istop,evalstp,tabline,pdata,ctx)
   
       implicit none
   
@@ -172,6 +164,9 @@ module modgencan_gpu
       real(kind=8), intent(inout) :: x(n)
       real(kind=8), intent(out) :: g(n)
       type(lssit_type), intent(inout) :: lssit
+
+      type(cgm_gpu_ctx), intent(inout) :: ctx
+      logical :: changed, pc
   
       ! istop =  0 means gsupn <= eps
       ! istop =  6 means f <= ftarget
@@ -379,18 +374,12 @@ module modgencan_gpu
         call comphpre(n,s(1:n),y(1:n),sty,sts,lspgmin,lspgmax,sameface,inform,lssit)
       end if
 
-      if ( truehp ) then
-         lssit%compressed = .true.
-         call evalh(n,x,lssit%hnnzmax,lssit%hne,lssit%hrow,lssit%hcol,lssit%hval,ierr,pdata)
-         if ( ierr .ne. 0 ) return
-      end if
-
-      ! (comphpre removido: precond = .false.)
-
       call hess_csr_update(ctx%h, lssit%hne, lssit%hrow, lssit%hcol, lssit%hval, frvar, changed)
 
+      pc = .false.
+      if ( precond ) pc = ( inform .eq. 0 )
       call cgm_gpu(ctx,n,n,ifr(1:n),x(1:n),lind,lbnd,uind,ubnd,g(1:n),cgdel,cgeps,maxitcg, &
-                  .false.,d(1:n),cgiter,iprintcg,ierr,cginfo)
+                   pc,d(1:n),cgiter,iprintcg,ierr,cginfo,lssit)
       normd1 = norm2( d(1:n) )
       if ( normd1 .gt. a1*gsupn ) then
          beta1 = ( a1 * gsupn ) / normd1
@@ -559,8 +548,8 @@ module modgencan_gpu
    /,5X,'Required optimality tolerance: ',1P,D7.1)
     end subroutine genuncb
     
-   ! *****************************************************************
-   ! *****************************************************************
+    ! *****************************************************************
+    ! *****************************************************************
       
     subroutine gencan(evalf,evalg,evalh,truehp,hnnzmax,n,x,lind, &
       lbnd,uind,ubnd,f,g,gpsupn,ftarget,eps,maxit,extallowed,precond,iter, &
@@ -592,27 +581,18 @@ module modgencan_gpu
    ! LOCAL SCALARS
    type(lssit_type) :: lssit
 
-    type(cgm_gpu_ctx) :: ctx
+   type(cgm_gpu_ctx) :: ctx
   
-    ierr = 0
-
+   ierr = 0
+   if ( .not. truehp ) stop 'gencan_gpu: so truehp = .true.'
    call lssitini(evalg,truehp,hnnzmax,0,n,0,0,lssit)
    lssit%pdata = pdata
-   if ( .not. truehp ) stop 'gencan_gpu: so truehp = .true.'
-   if ( precond )      stop 'gencan_gpu: precond = .true. ainda nao suportado'
    call cgm_gpu_init(ctx, n, hnnzmax, .true.)
-   call genuncb(..., ctx)          ! novo argumento final
+   call gencanb(evalf,evalg,evalh,truehp,n,x,lind,lbnd,uind,ubnd, &
+        f,g,gpsupn,lssit,ftarget,eps,maxit,extallowed,precond,iter,ierr,istop,evalstp, &
+        tabline,pdata,ctx)
    call cgm_gpu_free(ctx)
    call lssitend(lssit)
-
-      call lssitini(evalg,truehp,hnnzmax,0,n,0,0,lssit)
-    lssit%pdata = pdata
-
-    call gencanb(evalf,evalg,evalh,truehp,n,x,lind,lbnd,uind,ubnd, &
-            f,g,gpsupn,lssit,ftarget,eps,maxit,extallowed,precond,iter,ierr,istop, &
-            evalstp,tabline,pdata)
-    
-    call lssitend(lssit)
 
   end subroutine gencan
   
@@ -621,7 +601,7 @@ module modgencan_gpu
   
   subroutine gencanb(evalf,evalg,evalh,truehp,n,x,lind,lbnd,uind,ubnd, &
       f,g,gpsupn,lssit,ftarget,eps,maxit,extallowed,precond,iter,ierr,istop,evalstp, &
-      tabline,pdata)
+      tabline,pdata,ctx)
   
    implicit none
   
@@ -647,6 +627,8 @@ module modgencan_gpu
    real(kind=8), intent(inout) :: x(n)
    real(kind=8), intent(out) :: g(n)
    type(lssit_type), intent(inout) :: lssit
+   type(cgm_gpu_ctx), intent(inout) :: ctx
+   logical :: changed, pc
   
    ! Solves the box-constrained minimization problem
    !
@@ -1053,9 +1035,12 @@ module modgencan_gpu
         call comphpre(n,s(1:n),y(1:n),sty,sts,lspgmin,lspgmax,.not. newface,inform,lssit)
      end if
 
-      call hess_csr_update(ctx%h, lssit%hne, lssit%hrow, lssit%hcol, lssit%hval, frvar, changed)
-      call cgm_gpu(ctx,n,nfr,ifr(1:nfr),x(1:n),lind,lbnd,uind,ubnd,g(ifr(1:nfr)),cgdel,cgeps,maxitcg, &
-                  .false.,d(1:n),cgiter,iprintcg,ierr,cginfo)
+     call hess_csr_update(ctx%h, lssit%hne, lssit%hrow, lssit%hcol, lssit%hval, frvar, changed)
+
+     pc = .false.
+     if ( precond ) pc = ( inform .eq. 0 )
+     call cgm_gpu(ctx,n,nfr,ifr(1:nfr),x(1:n),lind,lbnd,uind,ubnd,g(ifr(1:nfr)),cgdel,cgeps,maxitcg, &
+                  pc,d(1:n),cgiter,iprintcg,ierr,cginfo,lssit)
 
       normd1 = norm2( d(1:nfr) ) 
       if ( normd1 .gt. a1*gpsupn ) then
@@ -1281,4 +1266,3 @@ module modgencan_gpu
 
 
   end module modgencan_gpu
-  

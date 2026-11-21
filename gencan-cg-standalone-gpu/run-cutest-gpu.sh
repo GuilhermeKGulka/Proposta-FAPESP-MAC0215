@@ -1,36 +1,33 @@
 #!/bin/bash
-# Uso: PRESET=amd ./run-cutest-gpu.sh [problema]
+# Uso: source ../env_cutest.sh ; PRESET=amd ./run_cutest_gpu.sh [lista.txt]
 PRESET="${PRESET:-amd}"
-BUILD_DIR="build/${PRESET}"
+BUILD="build/${PRESET}"
 LIST="${1:-problems.txt}"
+mkdir -p "$BUILD/logs"
+[ -z "$CUTEST" ] && { echo "rode: source ../env_cutest.sh"; exit 1; }
 
-if [ -z "$CUTEST" ]; then
-    echo "Erro: rode 'source ../env_cutest.sh' primeiro."
-    exit 1
-fi
+HDR="# Problem      SC IERR      CPU(s)         n                        f    gpsupn     iter     fcnt     gcnt     hcnt"
+[ -f table_cpu.txt ] || echo "$HDR" > table_cpu.txt
+[ -f table_gpu.txt ] || echo "$HDR" > table_gpu.txt
+touch done_gencan.txt
 
-# Compila a parte fixa
-cmake --preset "$PRESET" > /dev/null
-cmake --build --preset "$PRESET" --target gencan_cpu gencan_gpu kernels > /dev/null
-
-mkdir -p "$BUILD_DIR/logs"
+cmake --preset "$PRESET" > "$BUILD/logs/_core.log" 2>&1 && \
+cmake --build --preset "$PRESET" --target kernels gencan_gpu >> "$BUILD/logs/_core.log" 2>&1 || \
+  { echo "falha na parte fixa"; tail -20 "$BUILD/logs/_core.log"; exit 1; }
 
 for p in $(grep -v '^#' "$LIST"); do
-    echo "===== Compilando $p ====="
-    log="$BUILD_DIR/logs/$p.log"
-    
-    if ! cmake --preset "$PRESET" -DPROBLEM="$p" > "$log" 2>&1; then
-        echo "[falhou] $p"; continue
-    fi
-    if ! cmake --build --preset "$PRESET" --target cutestma_gpu >> "$log" 2>&1; then
-        echo "[falhou] $p"; continue
-    fi
-
-    echo "Rodando $p..."
-    ( cd "$BUILD_DIR" && ./cutestma_gpu ) 2>&1 | tee -a "$log"
-    
-    # Salva os resultados no tabline
-    if [ -f "$BUILD_DIR/tabline.txt" ]; then
-        cat "$BUILD_DIR/tabline.txt" >> "table_gencan_gpu.txt"
-    fi
+  grep -qx "$p" done_gencan.txt && continue
+  echo "===== $p ====="
+  log="$BUILD/logs/$p.log"
+  if ! cmake --preset "$PRESET" -DPROBLEM="$p" > "$log" 2>&1 || \
+     ! cmake --build --preset "$PRESET" --target cutestma_cpu cutestma_gpu >> "$log" 2>&1; then
+    echo "[falhou compilar] $p"; continue
+  fi
+  for v in cpu gpu; do
+    rm -f "$BUILD/tabline.txt" "$BUILD/solver-interrupted-tabline.txt"
+    ( cd "$BUILD" && ulimit -St 600 && ./cutestma_$v ) >> "$log" 2>&1
+    if   [ -f "$BUILD/tabline.txt" ]; then cat "$BUILD/tabline.txt" >> "table_$v.txt"
+    else printf " %-10s  FALHOU/TIMEOUT\n" "$p" >> "table_$v.txt"; fi
+  done
+  echo "$p" >> done_gencan.txt
 done
