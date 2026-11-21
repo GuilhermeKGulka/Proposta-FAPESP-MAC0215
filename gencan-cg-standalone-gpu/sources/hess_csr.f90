@@ -26,7 +26,7 @@ module hess_csr_mod
     ! host
     logical, allocatable :: frvar_prev(:)
     integer, allocatable :: renum(:), rcount(:), cur(:)
-    integer, allocatable, target :: pos1(:), pos2(:)
+    integer, allocatable :: pos1(:), pos2(:)   ! target vem do dummy h em hess_csr_update
     integer(c_int), allocatable :: row_ptr(:), col(:)
     real(c_double), allocatable :: val(:)
 

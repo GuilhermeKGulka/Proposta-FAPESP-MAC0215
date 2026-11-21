@@ -86,7 +86,7 @@ program test_cgm_gpu
     call hess_csr_update(ctx%h, hne, hrow, hcol, hval, frvar, changed)
     call system_clock(c0)
     call cgm_gpu(ctx, n, nfr, ifr, x, lind, lbnd, uind, ubnd, gc, delta(s), 1.0d-8, maxit(s), .false., &
-                 dgpu, itg, 0, ierr, infog)
+                 dgpu, itg, 0, ierr, infog, ls)
     call system_clock(c1);  t0g = real(c1 - c0, 8) / real(rate, 8) * 1d3
 
     derr = norm2(dgpu(1:nfr) - dcpu(1:nfr)) / max(norm2(dcpu(1:nfr)), tiny(1.0d0))

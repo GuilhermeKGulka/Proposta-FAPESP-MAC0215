@@ -149,6 +149,9 @@ target_link_libraries(gpucore PUBLIC hsgen hipfort_backend gencan_cpu)   # cgm_g
 add_library(gencan_gpu STATIC sources/gencan_gpu.f90)
 target_link_libraries(gencan_gpu PUBLIC gpucore)
 
+add_executable(test_hess_csr tests/test_hess_csr.f90)
+target_link_libraries(test_hess_csr PRIVATE gpucore gencan_cpu kernels hsgen hipfort_backend)
+
 add_executable(test_cgm_gpu tests/test_cgm_gpu.f90)
 target_link_libraries(test_cgm_gpu PRIVATE gpucore gencan_cpu kernels hsgen hipfort_backend)
 
