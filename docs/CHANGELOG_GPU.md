@@ -39,7 +39,11 @@ Resultados de referência (os da fase 6 serão comparados com eles):
 
 ## Estado atual
 
-Igual à linha de base: nenhuma mudança de código na fase 6 até agora.
+- **Fontes Fortran:** iguais à linha de base. Nenhum `.f90` mudou até agora na fase 6.
+- **Build:**
+  - a GPU é opcional (`GENCAN_GPU` AUTO/ON/OFF), assim como o CUTEst;
+  - preset `cpu` para compilar sem HIP;
+  - `toyprob_cpu` voltou ao build.
 
 ## Entradas
 
@@ -48,3 +52,22 @@ Igual à linha de base: nenhuma mudança de código na fase 6 até agora.
 - O que mudou: nenhum código. Este arquivo foi criado e a linha de base registrada.
 - Por quê: passo 1 do `docs/FASE6.md`.
 - Validação: não se aplica.
+
+### 2026-11-22 — CMake: GPU e CUTEst opcionais (fase 6, passo 2)
+- **Arquivo/rotina:** `gencan-cg-standalone-gpu/CMakeLists.txt`, `CMakePresets.json`, comentário de `run-tests.sh`.
+- **O que mudou (em relação a `gencan-cg-standalone/`):**
+  - A referência não tem CMake: compila com `gfortran -O3` pelos scripts `compile.sh`/`run-cutest.sh`.
+  - Aqui a opção `GENCAN_GPU` (`AUTO`/`ON`/`OFF`) decide se a parte GPU entra no build. `AUTO` procura o backend de `HIP_PLATFORM` e, se faltar algo, compila só a CPU com aviso.
+  - A busca do backend é a mesma dos `Generic-SpMV-API-Benchmarks` (ROCm e CUDA), agora não fatal.
+  - CUTEst opcional: sem `env_cutest.sh`, não há `cutestma_*`.
+  - Novo alvo `toyprob_cpu`.
+  - `lssit/cgm/gencan` são compilados com `-cpp` (`Fortran_PREPROCESS`) e grava seus módulos em `mod/cpu`. A parte GPU grava os seus em `mod/gpu`.
+  - Presets: `amd`/`nvidia` com `GENCAN_GPU=ON` e o novo `cpu` com `OFF`.
+- **Por quê:** pedido do orientador de que o mesmo pacote compile sem HIP. É também a base para compilar os mesmos fontes com e sem `-DGENCAN_GPU` (D2(b) do `docs/FASE6.md`). O CUTEst opcional permite compilar e rodar o `toyprob` sem instalar nada além do gfortran.
+- **Validação (22/11/2026, RX 9070 XT):**
+  - Preset `cpu` sem o ambiente do CUTEst: compila só `gencan_cpu` + `toyprob_cpu`, sem nada de HIP no `ldd`.
+  - Bit a bit: a saída de `toyprob_cpu` e de `cutestma_cpu` (build `cpu`) é idêntica à da referência compilada pelos scripts dela, nos 7 problemas da `pequena.txt`. Só a linha de tempo foi ignorada.
+  - `HIP_PLATFORM=nvidia` sem CUDA: em AUTO compila só a CPU e avisa "falta CUDA Toolkit"; em ON aborta.
+  - amd AUTO com o pacote `hip` desabilitado (simulando ROCm incompleto): compila só a CPU, com aviso.
+  - Preset `amd`: todos os alvos compilam; `run-tests.sh` dá 5/5 e 9/9; ROSENBR tem o mesmo `f` em CPU e GPU.
+  - **[NÃO VERIFICADO]** build NVIDIA com CUDA (precisa da máquina com RTX 5070 Ti).

@@ -118,8 +118,8 @@ A escolha final, com os números, vai para o changelog e para o PLANO §5.
 
 ## 5. Passos (cada um termina com testes e um commit que atualiza o changelog)
 
-1. **Preparação.** Criar o branch. Criar o `docs/CHANGELOG_GPU.md` com o formato combinado. Registrar a linha de base: as tabelas da fase 5 e os testes sintéticos.
-2. **CMake.** Opção `GENCAN_GPU` (AUTO/ON/OFF), `Fortran_PREPROCESS`, as duas bibliotecas com diretórios de módulos separados (D2(b)) e os alvos `toyprob_{cpu,gpu}` e `cutestma_{cpu,gpu}` a partir de um só fonte cada. Conferir que `-DGENCAN_GPU=OFF` compila sem tocar em HIP.
+1. **[FEITO 22/11]** **Preparação.** Criar o branch. Criar o `docs/CHANGELOG_GPU.md` com o formato combinado. Registrar a linha de base: as tabelas da fase 5 e os testes sintéticos.
+2. **[FEITO 22/11, exceto as duas bibliotecas, que entram no passo 3; CUTEst também ficou opcional]** **CMake.** Opção `GENCAN_GPU` (AUTO/ON/OFF), `Fortran_PREPROCESS`, as duas bibliotecas com diretórios de módulos separados (D2(b)) e os alvos `toyprob_{cpu,gpu}` e `cutestma_{cpu,gpu}` a partir de um só fonte cada. Conferir que `-DGENCAN_GPU=OFF` compila sem tocar em HIP.
    - Validação: o build OFF gera `toyprob`/`cutestma` só CPU, com resultados **bit a bit iguais** aos da referência.
 3. **`lssit` + `lssit_gpu`.**
    - Tipo GPU dentro do `lssit_type`, com `lssitini`/`lssitend`.

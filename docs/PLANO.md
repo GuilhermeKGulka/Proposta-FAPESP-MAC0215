@@ -69,7 +69,8 @@ Todos em `gencan-cg-standalone-gpu/` (fontes em `sources/`, testes em `tests/`).
 | `tests/test_cgm_gpu.f90` | novo | Etapas 3–4: `cgm_gpu` contra `cgm` original em cenários sintéticos. Tem **9 cenários** (7–9 com precondicionador) e imprime OK/FALHOU por cenário. |
 | `run-cutest-gpu.sh` | escrito na conversa | **Já tem o conteúdo novo** (conferido em 21/11): roda `cutestma_cpu` e `cutestma_gpu` por problema → `table_cpu.txt`/`table_gpu.txt`, retomável via `done_gencan.txt`. Não existe `run_cutest_gpu.sh`. |
 | `run-tests.sh` | escrito na conversa | Compila e roda `test_hess_csr` e `test_cgm_gpu`. Funciona: o alvo `test_hess_csr` voltou ao `CMakeLists.txt` em 21/11 (tinha sido removido em bff320c). |
-| `run-cutest.sh`, `compile.sh` | tentativa antiga | Obsoletos: usam alvos `cutestma`/`toyprob`, que não existem mais. `README.md` também está desatualizado. |
+| `run-cutest.sh`, `compile.sh` | tentativa antiga | Obsoletos: usam alvos `cutestma`/`toyprob`, que não existem com esses nomes (desde a fase 6 há `toyprob_cpu`). `README.md` também está desatualizado. Saem no passo 6 da fase 6. |
+| `CMakeLists.txt`, `CMakePresets.json` | fase 6, passo 2 (22/11) | GPU opcional (`GENCAN_GPU` AUTO/ON/OFF) e CUTEst opcional. Presets `amd`/`nvidia` (GPU obrigatória) e `cpu` (sem HIP). Ver §4.5. |
 
 ### 4.2 `hess_csr_mod` (Hessiana CSR por face)
 
@@ -121,7 +122,26 @@ Layout de `d_red` (fase 5):
 
 ### 4.5 CMake (alvos esperados)
 
+Desde a fase 6, passo 2 (22/11/2026):
+- **`GENCAN_GPU`** (`AUTO` por padrão):
+  - `AUTO` procura o backend de `HIP_PLATFORM` (amd: hipfort, hip, hipsparse, hipblas, hipcc e compilador C++; nvidia: hipfort nvptx, CUDA Toolkit, hipsparse/hipblas para CUDA e hipcc). Se faltar algo, avisa o que falta e compila só a CPU.
+  - `ON` aborta listando o que falta.
+  - `OFF` nem procura.
+  - A lógica de busca é a dos `Generic-SpMV-API-Benchmarks`, testada em ROCm e CUDA. Só deixou de ser fatal.
+- **Presets:** `amd` e `nvidia` usam `GENCAN_GPU=ON`; `cpu` usa `OFF` e gera `build/cpu`.
+- **CUTEst opcional:** sem as variáveis do `env_cutest.sh`, os alvos `cutestma_*` não são criados.
+- **Módulos:** os de `gencan_cpu` ficam em `mod/cpu` e os da parte GPU em `mod/gpu`, preparando a segunda compilação dos mesmos fontes com `-DGENCAN_GPU` (D2(b)).
+- **Pré-processamento:** `lssit/cgm/gencan` são compilados com `Fortran_PREPROCESS ON` (`-cpp`).
+- **Verificado em 22/11:**
+  - o build `cpu` não liga nada de HIP (`ldd`);
+  - a saída de `toyprob_cpu` e `cutestma_cpu` é **idêntica** à da referência compilada pelos scripts dela, nos 7 problemas da `pequena.txt` (fora a linha de tempo);
+  - nvidia AUTO sem CUDA cai para só CPU, e nvidia ON aborta;
+  - amd AUTO com `hip` ausente (simulado) cai para só CPU;
+  - preset `amd`: testes 5/5 e 9/9 e ROSENBR igual em CPU e GPU.
+  - O build NVIDIA com CUDA ainda não foi testado com o código novo **[NÃO VERIFICADO]**.
+
 ```
+toyprob_cpu  : sources/toyprob.f90                            (liga gencan_cpu; sempre)
 gencan_cpu   : sources/lssit.f90 cgm.f90 gencan.f90          (referência, inalterados)
 hsgen        : sources/hipsparse_generic.f90
 gpucore      : sources/hess_csr.f90 cgm_gpu.f90              (liga hsgen, hipfort_backend, gencan_cpu)
@@ -314,6 +334,9 @@ paste -d'\n' table_cpu.txt table_gpu.txt | less -S
 cmake --preset amd -DPROBLEM=ROSENBR
 cmake --build --preset amd --target cutestma_cpu cutestma_gpu
 (cd build/amd && ./cutestma_cpu | tail -15 && ./cutestma_gpu | tail -15)
+
+# So CPU, sem HIP/ROCm/CUDA (e sem CUTEst, se o env nao estiver carregado)
+cmake --preset cpu && cmake --build --preset cpu && ./build/cpu/toyprob_cpu
 ```
 
 Critério de aceitação geral: `iter`, `fcnt`, `gcnt`, `hcnt`, `f`, `gpsupn` iguais (ou muito próximos) entre CPU e GPU **com o mesmo `precond`**. Diferenças de arredondamento nas somas podem separar trajetórias em problemas mal condicionados; se acontecer em um bem condicionado, tratar como bug.

@@ -49,7 +49,15 @@ cmake --build --preset amd --target cutestma_cpu cutestma_gpu
 # varredura (retomavel): roda CPU e GPU por problema -> table_cpu.txt / table_gpu.txt
 PRESET=amd ./run-cutest-gpu.sh pequena.txt
 paste -d'\n' table_cpu.txt table_gpu.txt | less -S
+
+# so CPU (sem HIP; sem CUTEst se o env nao estiver carregado)
+cmake --preset cpu && cmake --build --preset cpu && ./build/cpu/toyprob_cpu
 ```
+
+- GPU e CUTEst são opcionais no CMake:
+  - `GENCAN_GPU=AUTO|ON|OFF`: o padrão sem preset é `AUTO`; os presets `amd`/`nvidia` usam `ON` e o preset `cpu` usa `OFF`.
+  - Sem `env_cutest.sh`, os alvos `cutestma_*` não são criados.
+  - Toda mudança no CMake precisa ser conferida nos dois backends (ROCm e CUDA). Nesta máquina não há CUDA: teste o nvidia pelo menos em AUTO/ON (fallback/erro) e registre o build CUDA real como **[NÃO VERIFICADO]** até rodar na máquina NVIDIA.
 
 - **O problema CUTEst é fixado quando o CMake configura.** `-DPROBLEM=X` roda o `sifdecoder` e gera `ELFUN.f GROUP.f RANGE.f [EXTER.f]` em `build/<preset>/`. Para trocar de problema é preciso reconfigurar.
 - `run-cutest-gpu.sh` pula os problemas listados em `done_gencan.txt` (apague a linha para repetir um problema). Os logs ficam em `build/<preset>/logs/<PROBLEMA>.log`, e é lá que aparece o motivo quando o script diz "falhou compilar". `pequena.txt` tem 7 problemas e `problems.txt` tem 475.
@@ -60,7 +68,7 @@ paste -d'\n' table_cpu.txt table_gpu.txt | less -S
 - `table_cpu.txt`/`table_gpu.txt` são a saída de trabalho do script. Resultados que valem como referência são copiados para `gencan-cg-standalone-gpu/resultados/` com o nome `table_{cpu,gpu}_<fase>[_<variante>].txt` e citados no PLANO §6.
 - Divergência de `iter` entre CPU e GPU: antes de tratar como bug, rode o controle CPU contra CPU com a ordem das somas invertida (PLANO §6 e §8, caso BQPGAUSS).
 - Scripts e alvos desatualizados:
-  - `compile.sh` e `run-cutest.sh` deste diretório usam alvos que não existem mais (`toyprob`, `cutestma`).
+  - `compile.sh` e `run-cutest.sh` deste diretório usam alvos que não existem com esses nomes (`toyprob`, `cutestma`; hoje há `toyprob_cpu` e `cutestma_{cpu,gpu}`).
   - O `README.md` cita arquivos fora do build (`scalar_kernels.cpp`, `gencan_gpu_context.f90`).
 
 ## Arquitetura (resumo; detalhes no PLANO §4)
