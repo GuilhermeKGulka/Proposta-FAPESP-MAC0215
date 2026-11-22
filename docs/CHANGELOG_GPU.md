@@ -39,7 +39,9 @@ Resultados de referência (os da fase 6 serão comparados com eles):
 
 ## Estado atual
 
-- **Fontes Fortran:** iguais à linha de base. Nenhum `.f90` mudou até agora na fase 6.
+- **`lssit.f90`:** o tipo ganha `usegpu` (padrão `.true.`) e `gpu`. `lssitini` dobra a capacidade da Hessiana, `lssitend` libera a GPU e o `preparehv`, no fim, chama `lssit_gpu_prepare`. Tudo sob `#ifdef GENCAN_GPU`.
+- **`lssit_gpu.f90` (novo):** Hessiana da face na GPU (espelho + `coo2csr` do orientador + envio + SpMV).
+- **Caminho da fase 5:** `hess_csr`, `cgm_gpu` e `gencan_gpu` continuam em uso pelo `cutestma_gpu` até os passos 4–5.
 - **Build:**
   - a GPU é opcional (`GENCAN_GPU` AUTO/ON/OFF), assim como o CUTEst;
   - preset `cpu` para compilar sem HIP;
@@ -71,3 +73,33 @@ Resultados de referência (os da fase 6 serão comparados com eles):
   - amd AUTO com o pacote `hip` desabilitado (simulando ROCm incompleto): compila só a CPU, com aviso.
   - Preset `amd`: todos os alvos compilam; `run-tests.sh` dá 5/5 e 9/9; ROSENBR tem o mesmo `f` em CPU e GPU.
   - **[NÃO VERIFICADO]** build NVIDIA com CUDA (precisa da máquina com RTX 5070 Ti).
+
+### 2026-11-22 — `lssit` guarda a Hessiana da face na GPU (fase 6, passo 3, primeira versão)
+- **Arquivo/rotina:** `sources/lssit.f90` (`lssit_type`, `lssitini`, `lssitend`, `preparehv`), `sources/lssit_gpu.f90` (novo), `tests/test_hess_csr.f90`, `CMakeLists.txt`.
+- **O que mudou (em relação a `gencan-cg-standalone/`):** sob `#ifdef GENCAN_GPU`:
+  - `lssit_type` ganha `logical :: usegpu = .true.` e `type(lssit_gpu_type) :: gpu`;
+  - `lssitini` aloca `hrow/hcol/hval` com `2*hnnzmax` quando `usegpu` (espaço do espelho);
+  - `lssitend` chama `lssit_gpu_free`;
+  - `preparehv`, depois da compactação original, chama `lssit_gpu_prepare` se `usegpu .and. truehp .and. compressed`. Essa rotina espelha o triângulo, roda o `coo2csr` do orientador in-place (código executável idêntico) e envia o CSR. Se o COO compactado for igual ao anterior, só os valores sobem. Depois disso o `lssit` não guarda mais um COO válido, e o produto `H v` da face fica só na GPU.
+  - Sem a macro, o fonte é o original: o único texto fora de `#ifdef` é a variável `hcap = hnnzmax` no `lssitini`.
+- **Por quê:**
+  - D3 (estado no `lssit`) e D4 (`coo2csr`) do `docs/FASE6.md`.
+  - O `usegpu` no tipo permite que os testes comparem GPU e CPU no mesmo executável, sem mudar assinaturas (D2(b)).
+  - O ramo exige `compressed`, porque com restrições (`compressed = .false.`) o `computetruehv` soma termos do Jacobiano.
+- **CMake:**
+  - nova biblioteca provisória `gencan_gpu6`, com os mesmos `lssit/cgm/gencan.f90` compilados com `-DGENCAN_GPU` mais o `lssit_gpu.f90`, e módulos em `mod/gpu6`;
+  - o `hess_csr.f90` virou a biblioteca `hesscsr`, usada só para comparação.
+- **Validação (22/11/2026, RX 9070 XT):**
+  - `test_hess_csr` parte A: 6/6, erro relativo ≤ 2.3e-16 contra `preparehv` + `computehv` da CPU. Cobre "mesmo padrão, valores novos" (padrão não refeito), face vazia e "mesma face, outra estrutura de COO" (padrão refeito).
+  - `test_cgm_gpu`: 9/9 (caminho da fase 5).
+  - Build `cpu`: saída idêntica à referência no `toyprob` e nos 7 problemas da `pequena.txt`.
+- **Medição (D4), `test_hess_csr` parte B:** `n = 300000`, 900000 entradas fora da diagonal, face de 80% (`nfr = 239931`, `nnz = 1391954`). Tempo por passo de Newton com o padrão reaproveitado:
+
+  | Caminho | Tempo |
+  |---|---|
+  | fase 6 (`preparehv` + espelho + `coo2csr` + envio) | **55,1 ms** |
+  | `preparehv` só CPU | 23,7 ms |
+  | fase 5 (`hess_csr_update`: envio do COO + scatter) | **1,06 ms** |
+
+  O SpMV custa 0,066 ms (fase 6) e 0,061 ms (fase 5). Os dois CSR dão o mesmo `y` (diferença 4e-16).
+  - Conclusão: esta versão é cerca de 50× mais cara por passo de Newton do que a fase 5. A compactação do `preparehv` original sozinha já custa 24 ms, e a fase 5 a evitava. Melhoria proposta no `docs/FASE6.md` §4.0.

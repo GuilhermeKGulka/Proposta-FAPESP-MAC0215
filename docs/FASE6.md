@@ -82,6 +82,26 @@ Vantagem extra: o executável CPU sai dos mesmos fontes sem a macro, e é ele qu
 
 A escolha final, com os números, vai para o changelog e para o PLANO §5.
 
+**Medição da versão (i), em 22/11/2026** (`test_hess_csr` parte B, `n = 300000`, `nnz = 1,39 M`; detalhes no changelog). Com o padrão reaproveitado, o tempo por passo de Newton é:
+- 55 ms na fase 6;
+- 1,06 ms na fase 5;
+- 23,7 ms só na compactação do `preparehv` original, que a fase 5 não fazia.
+
+A causa é estrutural: a fase 5 nunca compactava o COO na CPU. Ela guardava, uma vez por padrão, a posição de cada entrada do COO original no CSR (`pos1/pos2`), e depois só enviava `hne` valores e espalhava na GPU.
+
+**Proposta (iv) [ABERTO: aguardando aprovação]:** no modo GPU, o `preparehv` faz o ramo GPU **no lugar** da compactação na CPU, partindo do COO original do `evalh`:
+- **Detectar mudança de padrão:** comparar `hne`, `hrow/hcol` e `frvar` com a última montagem. É O(hne) em inteiros e vale para qualquer `evalh`.
+- **Montar o padrão (só quando ele muda), em vetores de trabalho do `lssit%gpu`:**
+  - renumerar e filtrar pela face (mesma regra do `preparehv`) e espelhar;
+  - rodar o `coo2csr` do orientador, adaptado para carregar, no lugar do valor, a origem de cada entrada (`+e` direta, `−e` espelhada);
+  - a partir daí, montar `row_ptr`, `col` e `pos1/pos2`, e enviar tudo.
+- **A cada passo:** enviar os `hne` valores originais e espalhar em kernel (o `launch_scatter` que já existe).
+- **Efeitos colaterais:**
+  - O COO do `lssit` não é mais destruído.
+  - A capacidade do `lssit` volta a `hnnzmax`, e o espaço do espelho fica nos vetores de trabalho.
+  - O custo esperado por passo é o da fase 5 mais a comparação da estrutura.
+- **Analogia:** continua no nível da rotina, porque o `preparehv` segue "preparando a Hessiana da face para os produtos H v". O que muda é que, no modo GPU, ele não executa a compactação da CPU. Essa é uma adaptação de desempenho justificada pelos números acima.
+
 ### 4.1 Opções discutidas (proposta de 21/11/2026)
 
 **D1. Como compilar sem HIP.**

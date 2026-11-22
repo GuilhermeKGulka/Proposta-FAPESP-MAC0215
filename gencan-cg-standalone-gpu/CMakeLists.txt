@@ -165,15 +165,31 @@ if(GPU_ENABLED)
 
   add_library(hsgen STATIC sources/hipsparse_generic.f90)
   target_link_libraries(hsgen PUBLIC hipfort_backend)
+  target_include_directories(hsgen PUBLIC ${CMAKE_BINARY_DIR}/mod/gpu)
 
-  add_library(gpucore STATIC sources/hess_csr.f90 sources/cgm_gpu.f90)
-  target_link_libraries(gpucore PUBLIC hsgen hipfort_backend gencan_cpu)   # cgm_gpu usa o modulo lssit
+  # Gencan GPU da fase 6: os MESMOS fontes de gencan_cpu, com -DGENCAN_GPU, mais a
+  # Hessiana na GPU (lssit_gpu.f90). Modulos em mod/gpu6 (lssit.mod etc. tem o
+  # mesmo nome dos da CPU). Nome provisorio: vira gencan_gpu no passo 5.
+  add_library(gencan_gpu6 STATIC ${GENCAN_SRCS} sources/lssit_gpu.f90)
+  target_compile_definitions(gencan_gpu6 PRIVATE GENCAN_GPU)
+  set_target_properties(gencan_gpu6 PROPERTIES Fortran_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/mod/gpu6)
+  target_include_directories(gencan_gpu6 PUBLIC ${CMAKE_BINARY_DIR}/mod/gpu6)
+  target_link_libraries(gencan_gpu6 PUBLIC hsgen hipfort_backend)
+
+  # caminho da fase 5 (sai nos passos 4-5): hess_csr nao usa lssit; cgm_gpu usa o da CPU
+  add_library(hesscsr STATIC sources/hess_csr.f90)
+  target_link_libraries(hesscsr PUBLIC hsgen hipfort_backend)
+
+  add_library(gpucore STATIC sources/cgm_gpu.f90)
+  target_link_libraries(gpucore PUBLIC hesscsr hsgen hipfort_backend gencan_cpu)
 
   add_library(gencan_gpu STATIC sources/gencan_gpu.f90)
   target_link_libraries(gencan_gpu PUBLIC gpucore)
 
+  # test_hess_csr: lssit GPU (usegpu) contra lssit CPU (usegpu = .false.), ambos de
+  # gencan_gpu6; hesscsr so para medir contra a fase 5
   add_executable(test_hess_csr tests/test_hess_csr.f90)
-  target_link_libraries(test_hess_csr PRIVATE gpucore gencan_cpu kernels hsgen hipfort_backend)
+  target_link_libraries(test_hess_csr PRIVATE gencan_gpu6 hesscsr kernels hsgen hipfort_backend)
 
   add_executable(test_cgm_gpu tests/test_cgm_gpu.f90)
   target_link_libraries(test_cgm_gpu PRIVATE gpucore gencan_cpu kernels hsgen hipfort_backend)

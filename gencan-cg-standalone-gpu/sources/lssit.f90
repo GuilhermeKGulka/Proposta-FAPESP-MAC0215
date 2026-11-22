@@ -1,6 +1,9 @@
 module lssit
   use iso_c_binding, only: c_ptr
-  
+#ifdef GENCAN_GPU
+  use lssit_gpu_mod, only: lssit_gpu_type, lssit_gpu_prepare, lssit_gpu_free
+#endif
+
   implicit none
 
   interface
@@ -26,6 +29,11 @@ module lssit
      integer :: n,m,p,hnnzmax,hne,jnnzmax,jne,infohapp
      logical :: compressed,sameface,truehp
      real(kind=8) :: rho,sty,seucn,yeucn,plspg,psmdyty,hstds,hlspg
+#ifdef GENCAN_GPU
+     ! Hessiana da face na GPU (lssit_gpu.f90); usegpu = .false. volta ao caminho original
+     logical :: usegpu = .true.
+     type(lssit_gpu_type) :: gpu
+#endif
   end type lssit_type
 
   private
@@ -52,7 +60,7 @@ contains
     type(lssit_type), intent(out) :: lssit
 
     ! LOCAL SCALARS
-    integer :: allocerr
+    integer :: allocerr,hcap
 
     lssit%n  = n
     lssit%m  = m
@@ -64,7 +72,12 @@ contains
 
     lssit%evalg => evalg 
 
-    allocate(lssit%hrow(hnnzmax),lssit%hcol(hnnzmax),lssit%hval(hnnzmax),&
+    hcap = hnnzmax
+#ifdef GENCAN_GPU
+    if ( lssit%usegpu ) hcap = 2 * hnnzmax   ! espaco para o espelho do triangulo (lssit_gpu_prepare)
+#endif
+
+    allocate(lssit%hrow(hcap),lssit%hcol(hcap),lssit%hval(hcap),&
              lssit%jsta(m+p),lssit%jlen(m+p),lssit%jvar(jnnzmax),&
              lssit%jval(jnnzmax),lssit%constrin(m+p),lssit%s(n),&
              lssit%y(n),lssit%pdiag(n),lssit%psmdy(n),lssit%hds(n),stat=allocerr)
@@ -89,6 +102,10 @@ contains
 
     ! LOCAL SCALARS
     integer :: allocerr
+
+#ifdef GENCAN_GPU
+    call lssit_gpu_free(lssit%gpu)
+#endif
 
     deallocate(lssit%hrow,lssit%hcol,lssit%hval,&
              lssit%jsta,lssit%jlen,lssit%jvar,&
@@ -167,7 +184,17 @@ contains
       end if
     end if
 
-  end subroutine preparehv 
+#ifdef GENCAN_GPU
+    ! COO da face (ja compactado acima) -> CSR na GPU. Depois disso hrow/hcol/hval
+    ! deixam de ser COO: o produto H v da face passa a ser feito so na GPU.
+    lssit%gpu%active = .false.
+    if ( lssit%usegpu .and. lssit%truehp .and. lssit%compressed ) then
+      call lssit_gpu_prepare(lssit%gpu,n,size(lssit%hrow),nfr,lssit%hne, &
+                             lssit%hrow,lssit%hcol,lssit%hval)
+    end if
+#endif
+
+  end subroutine preparehv
 
   ! *****************************************************************
   ! *****************************************************************
