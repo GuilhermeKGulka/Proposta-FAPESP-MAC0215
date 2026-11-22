@@ -261,6 +261,7 @@ Próximos passos da fase 6:
 ### 7.2 Medição justa de desempenho
 
 5. Medir com **tempo de parede** (`system_clock`) em `cutestma_cpu` e `cutestma_gpu`.
+   - **Limite de tempo por execução:** o `run-cutest-gpu.sh` usa `ulimit -St 600`, que é tempo de CPU. Nos benchmarks de desempenho ele deve ser retirado ou bem maior, porque a vantagem da GPU cresce justamente nos problemas que demoram (observação do usuário, 22/11/2026). A medição (c) da fase 6 ainda rodou com 600 s.
 6. Tirar `cgm_gpu_init` da região medida (contexto criado uma vez, ou medir separadamente), ou reportar "tempo total" e "tempo do laço" separados.
 7. Benchmark com n grande: `test_cgm_gpu` com `n = 300000`, `noff = 900000` (antes/depois da fase 5); problemas CUTEst grandes (ex.: `YATP1CLS`, `YATP2CLS`, `FMINSURF`, `POWER`, `CURLY*`, `NCB20*`, séries `TORSION*`, `OBSTCL*`, `JNLBRNG*`, `DEGTRID*`). Lista completa em `problems.txt`.
 8. Perfilar (rocprof): quanto vai em H2D por iteração de Newton (COO + compactações), `hess_csr_update`, SpMV, kernels e sincronizações.
@@ -310,7 +311,7 @@ O pedido:
    - Para escolher CPU/GPU em tempo de execução: argumento `usegpu`, que é o D2(a).
    - Para o usuário avisar que a estrutura da Hessiana devolvida pelo `evalh` é fixa: evitaria comparar `hrow/hcol` a cada passo, ~0,6 ms em `nnz = 1,4 M` (`docs/FASE6.md` §4.0).
    - As duas mudanças são do mesmo tipo e podem ser decididas juntas.
-2. **Conversão COO → CSR.** Usamos contagem por linha com colocação fora do lugar, que mantém os dois primeiros laços do `coo2csr` dele. A permutação in-place por ciclos ficou cerca de 3× mais lenta na troca de face (46 contra 16 ms), e nos problemas com caixa a face muda em quase todo passo. A versão com o `coo2csr` está no branch `fase6-coo2csr`.
+2. **Conversão COO → CSR** (explicação completa, com corretude e eficiência, em `docs/CONVERSAO_CSR.md`). Usamos contagem por linha com colocação fora do lugar, que mantém os dois primeiros laços do `coo2csr` dele. A permutação in-place por ciclos ficou cerca de 3× mais lenta na troca de face (46 contra 16 ms), e nos problemas com caixa a face muda em quase todo passo. A versão com o `coo2csr` está no branch `fase6-coo2csr`.
 
 Perguntas originais (respondidas no plano acima):
 - Como escolher CPU ou GPU: opção do CMake (por exemplo `-DUSE_GPU=ON`, ligada só se o HIP for encontrado) com pré-processador (`#ifdef` em `.F90`), ou módulos separados escolhidos na hora de linkar. E se a escolha também existe em tempo de execução (um parâmetro como `truehp`/`precond`).
