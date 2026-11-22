@@ -192,3 +192,11 @@ Resultados de referência (os da fase 6 serão comparados com eles):
   - Nos problemas que convergem em poucos passos, a GPU perde pelo custo fixo.
   - Divergências de `iter` no CYCLOOCTLS e no ODNAMUR foram atribuídas a arredondamento, com o controle de somas invertidas.
   - No ODNAMUR (`hne = 9,4 M`, face com `nnz = 3,9 M`), o `preparehv` custa 49 ms por passo, 14% do tempo GPU.
+
+### 2026-11-22 — limpeza e validação final no AMD (fase 6, passos 6 e 7)
+- **Arquivo/rotina:** removidos `compile.sh` e `run-cutest.sh` do diretório GPU (obsoletos); `README.md` reescrito.
+- **Validação:**
+  - `pequena.txt` com `precond = .false.`: CPU e GPU idênticas à fase 5 em todos os campos (`resultados/table_*_fase6_nopre.txt`), assim como já tinha acontecido com `precond = .true.`;
+  - testes sintéticos 6/6 e 9/9;
+  - build `cpu` idêntico à referência.
+- **Pendente:** NVIDIA **[NÃO VERIFICADO]**.

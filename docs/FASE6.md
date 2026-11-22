@@ -180,7 +180,7 @@ Questões em aberto:
 6. **[FEITO 22/11: código morto e scripts obsoletos removidos; README, CLAUDE.md e PLANO atualizados]** **Limpeza.**
    - Remover o código morto e os scripts obsoletos.
    - Atualizar o `README.md` do diretório, o `CLAUDE.md` e o PLANO.
-7. **Validação final.**
+7. **[FEITO 22/11 no AMD, exceto o NVIDIA]** Testes sintéticos 6/6 e 9/9. `pequena.txt` idêntica à fase 5 nos dois modos de `precond` (`resultados/table_*_fase6_{pre,nopre}.txt`). Build `cpu` idêntico à referência. **Falta: NVIDIA [NÃO VERIFICADO].** **Validação final.**
    - Testes sintéticos.
    - `pequena.txt` nos dois modos de `precond`, comparado com `resultados/table_*_fase5_*.txt`.
    - Build com `GENCAN_GPU=OFF`.

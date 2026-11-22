@@ -237,6 +237,8 @@ Controle: rodei o `cgm` da **CPU** com os produtos internos somados em ordem rev
   - Os testes não precisam mais de `invalidate`: o `lssit_gpu` detecta sozinho a mudança de estrutura.
 - **Build `cpu`:** `compare-cpu-ref.sh` dá 0 diferenças contra a referência.
 - **CUTEst `pequena.txt`, `precond = .true.`:** CPU e GPU com **todos os campos idênticos aos da fase 5**, fora o tempo, inclusive o BQPGAUSS (118). Tabelas em `resultados/table_{cpu,gpu}_fase6_pre.txt`.
+- **CUTEst `pequena.txt`, `precond = .false.`** (passo 7; o `cutestma.f90` foi alterado só durante a rodada e depois restaurado): também idênticos à fase 5 em todos os campos, com o BQPGAUSS em 97/90 como na fase 5. Tabelas em `resultados/table_{cpu,gpu}_fase6_nopre.txt`.
+- **Pendente para fechar a fase 6:** build e `pequena.txt` no NVIDIA **[NÃO VERIFICADO]**.
 - **Padrões novos por chamada de `preparehv`:** 1 nos problemas sem caixa. Nos com caixa, quase todo passo: BQPGAUSS 109/111, TORSION1 23/23, OBSTCLAE 21/21.
 
 **Fase 6, medição (c): 18 problemas com caixa e `n ≥ 10000` (`grandes_bound.txt`, 22/11/2026).**
