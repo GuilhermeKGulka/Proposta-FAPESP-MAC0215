@@ -19,7 +19,7 @@ Iniciação científica FAPESP (IME-USP, orientador Ernesto G. Birgin). Implemen
    - COO → CSR adaptado de `docs/coo2csr_orientador.f90`;
    - cada mudança em relação ao Gencan de referência registrada em `docs/CHANGELOG_GPU.md`.
 
-A fase 6 começa com um plano aprovado pelo usuário: as decisões **[ABERTO]** do PLANO §7.5 vêm antes de qualquer código.
+O plano da fase 6 está em `docs/FASE6.md`, aprovado em 22/11/2026: decisões no §4.0 e passos 1–7 no §5. O trabalho é feito no branch `fase6`. A escolha CPU/GPU é provisoriamente só de compilação (D2(b)), porque o argumento `usegpu` depende do orientador aprovar a mudança de assinatura. A rota do `coo2csr` (D4) precisa ser medida contra o scatter da fase 5.
 
 Leia antes de começar:
 - `docs/PLANO.md`: estado atual, decisões, testes, pendências, armadilhas e cronograma. É a fonte da verdade do andamento.

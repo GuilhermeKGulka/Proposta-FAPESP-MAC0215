@@ -2,7 +2,7 @@
 
 > Documento de migração de contexto. Resume o estado do projeto, decisões, código, pendências e próximos passos.
 > Itens marcados **[NÃO VERIFICADO]** foram escritos mas ainda não compilados/rodados. Itens **[ABERTO]** dependem de informação ou decisão pendente.
-> Última atualização: 21/11/2026.
+> Última atualização: 22/11/2026.
 
 ---
 
@@ -148,6 +148,12 @@ cutestma_gpu : sources/cutestma_gpu.f90 + ${DECODED_SRCS} + ${CUTEST_LIB}  (liga
 8. Precondicionador: `comphpre` na CPU; aplicação fundida nas reduções existentes.
 9. Fase 5: 1 sincronização por iteração via especulação; scatter COO→CSR em kernel.
 10. Validar sempre contra o `cgm`/`gencan` **originais** (mesmo `iter`, `cginfo`, `fcnt/gcnt/hcnt`, `f`, `gpsupn`).
+11. Fase 6 (22/11/2026; detalhes no `docs/FASE6.md` §4.0):
+    - código único com `#ifdef GENCAN_GPU`;
+    - por enquanto, CPU e GPU escolhidas na compilação (duas bibliotecas a partir dos mesmos fontes);
+    - estado da GPU no `lssit_type`;
+    - CSR montado por espelhamento + `coo2csr` do orientador dentro do `preparehv`, a medir contra o scatter;
+    - trabalho no branch `fase6`.
 
 ---
 
@@ -203,7 +209,7 @@ Controle: rodei o `cgm` da **CPU** com os produtos internos somados em ordem rev
 
 ### 7.1 Imediato (validação das fases 4–5)
 
-Situação em 21/11/2026: **todos os itens do §7.1 estão feitos**, e a fase 5 está validada (§6). O próximo passo é planejar a fase 6 (§7.5).
+Situação em 21/11/2026: **todos os itens do §7.1 estão feitos**, e a fase 5 está validada (§6). Em 22/11/2026 o plano da fase 6 foi aprovado (§7.5, `docs/FASE6.md`).
 
 1. **[FEITO]** **Igualar `precond`** nos dois `cutestma` e rodar duas rodadas: `false/false` e `true/true` (`grep -n "precond *=" sources/cutestma*.f90`). Conferir `gcnt` iguais e `BQPGAUSS`. Se ainda divergir com `precond` igual: rodar com `iprint = 3` dos dois lados e comparar a trajetória.
 2. **[FEITO, com 9 cenários]** **Completar `tests/test_cgm_gpu.f90` com 8 cenários**: 7 = SPD com precond, 8 = SPD com bounds e precond. Para cada cenário com precond: sortear `s`, calcular `y = H s` (H simétrica a partir do COO), `sty`, `sts`, chamar `comphpre(n, s, y, sty, sts, 1d-16, 1d16, .true., inform, ls)` antes do `cgm`/`cgm_gpu`; passar `prec(s)` no lugar de `.false.` e `ls` no final da chamada `cgm_gpu`. `nscen = 8`, novo array `prec`.
@@ -249,7 +255,15 @@ O pedido:
   - pouco código novo.
 - A conversão COO → CSR deve ser uma adaptação da rotina `coo2csr` do orientador (in-place, O(nnz), sabidamente eficiente). A cópia está em `docs/coo2csr_orientador.f90`.
 
-Em aberto, a decidir no planejamento da fase 6 **[ABERTO]**:
+**Plano: `docs/FASE6.md`** (proposto em 21/11/2026 e aprovado em 22/11/2026). O ponto principal é que o "conflito" do `coo2csr` não existe no fluxo do Gencan: `evalh` reescreve o COO a cada passo de Newton, logo antes do `preparehv`. O estado da GPU passa a morar no `lssit`. Decisões (detalhes no FASE6 §4.0):
+- D1: pré-processador, `GENCAN_GPU` AUTO/ON/OFF.
+- D2: **provisoriamente** só em tempo de compilação. Os mesmos fontes são compilados em duas bibliotecas (CPU e GPU) e geram `cutestma_cpu`/`cutestma_gpu`. O argumento `usegpu` em `genunc`/`gencan` depende de o orientador aceitar a mudança de assinatura. **[ABERTO: perguntar ao orientador]**
+- D3: estado da GPU no `lssit_type`.
+- D4: espelhar + `coo2csr` in-place + enviar o CSR, **medindo** contra o scatter da fase 5 e procurando melhorias.
+- D5: código em `gencan-cg-standalone-gpu/`.
+- D6: branch `fase6`.
+
+Perguntas originais (respondidas no plano acima):
 - Como escolher CPU ou GPU: opção do CMake (por exemplo `-DUSE_GPU=ON`, ligada só se o HIP for encontrado) com pré-processador (`#ifdef` em `.F90`), ou módulos separados escolhidos na hora de linkar. E se a escolha também existe em tempo de execução (um parâmetro como `truehp`/`precond`).
 - Onde fica o código único: `gencan-cg-standalone/` continua sendo a referência intocada que serve de linha de base. O código unificado provavelmente nasce em `gencan-cg-standalone-gpu/`.
 - Como adaptar o `coo2csr` (combinado em 21/11: este conflito será resolvido na fase 6). A rotina é in-place, mas o caminho GPU atual depende de manter o COO original: `preparehv` não é chamado justamente porque destrói o COO. Além disso, ela não filtra a face, não renumera e não espelha o triângulo, e a ordem das colunas dentro de cada linha não é garantida. É preciso decidir se a conversão roda sobre uma cópia, se reaproveita a renumeração do `preparehv`, e quanto do `hess_csr` (posições `pos1/pos2`, padrão refeito só quando a face muda) sobrevive.
