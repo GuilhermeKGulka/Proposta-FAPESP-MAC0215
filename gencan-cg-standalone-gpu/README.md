@@ -103,4 +103,3 @@ O `run-cutest-gpu.sh` limita cada execução a 600 s de CPU (`ulimit -St`). Para
   - CUTEst `pequena.txt` com resultado idêntico ao da fase 5, que já tinha sido validada contra a CPU.
 - **NVIDIA:** o build com CUDA ainda não foi testado com o código atual.
 - **Fora do escopo por enquanto:** `truehp = .false.` (quocientes incrementais) e restrições gerais (Algencan). Nesses casos o Gencan usa o caminho da CPU.
-- **Obsoletos:** `compile.sh` e `run-cutest.sh` deste diretório usam alvos antigos (`toyprob`, `cutestma`). Use o CMake.

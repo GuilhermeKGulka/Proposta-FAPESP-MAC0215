@@ -69,7 +69,7 @@ Todos em `gencan-cg-standalone-gpu/` (fontes em `sources/`, testes em `tests/`).
 | `tests/test_cgm_gpu.f90` | novo | Etapas 3–4: `cgm_gpu` contra `cgm` original em cenários sintéticos. Tem **9 cenários** (7–9 com precondicionador) e imprime OK/FALHOU por cenário. |
 | `run-cutest-gpu.sh` | escrito na conversa | **Já tem o conteúdo novo** (conferido em 21/11): roda `cutestma_cpu` e `cutestma_gpu` por problema → `table_cpu.txt`/`table_gpu.txt`, retomável via `done_gencan.txt`. Não existe `run_cutest_gpu.sh`. |
 | `run-tests.sh` | escrito na conversa | Compila e roda `test_hess_csr` e `test_cgm_gpu`. Funciona: o alvo `test_hess_csr` voltou ao `CMakeLists.txt` em 21/11 (tinha sido removido em bff320c). |
-| `run-cutest.sh`, `compile.sh` | tentativa antiga | Obsoletos: usam alvos `cutestma`/`toyprob`, que não existem com esses nomes (desde a fase 6 há `toyprob_cpu`). `README.md` também está desatualizado. Saem no passo 6 da fase 6. |
+| `run-cutest.sh`, `compile.sh` | tentativa antiga | **Removidos em 22/11/2026** (fase 6, passo 6). O `README.md` foi reescrito para a estrutura da fase 6. |
 | `CMakeLists.txt`, `CMakePresets.json` | fase 6, passo 2 (22/11) | GPU opcional (`GENCAN_GPU` AUTO/ON/OFF) e CUTEst opcional. Presets `amd`/`nvidia` (GPU obrigatória) e `cpu` (sem HIP). Ver §4.5. |
 
 ### 4.2 `hess_csr_mod` (Hessiana CSR por face)
@@ -378,7 +378,7 @@ Perguntas originais (respondidas no plano acima):
 3. **`hess_csr_update` só refaz o padrão se a face/`hne` mudam**: testes sintéticos com COO novo precisam de `hess_csr_invalidate`. Sem isso, o cenário 6 do `test_cgm_gpu` dava erro 1.0.
 4. **Edição manual do `gencan.f90`**: houve reticências literais (`call gencanb(..., evalstp,...)`), `ctx` não declarado e bloco duplicado em `genunc`. O `ctx` é local em `genunc`/`gencan`; só `genuncb`/`gencanb` o recebem como argumento.
 5. **`gcnt` não bate se `precond` for diferente** entre os `cutestma`.
-6. Scripts: o `run-cutest-gpu.sh` atual já roda CPU e GPU. `run-cutest.sh` e `compile.sh` são obsoletos, e `run-tests.sh` depende do alvo `test_hess_csr`, que sumiu do CMake.
+6. Scripts: o `run-cutest-gpu.sh` atual já roda CPU e GPU. `run-cutest.sh` e `compile.sh` eram obsoletos e foram removidos na fase 6.
 7. O script marca "falhou compilar" sem mostrar o motivo: ver `build/<preset>/logs/<PROBLEMA>.log`.
 8. **gfortran não aceita `target` em componente de tipo derivado.** O atributo vem do dummy: um argumento `type(...), target :: h` torna `c_loc(h%comp)` válido.
 9. `run-cutest-gpu.sh` pula tudo o que está em `done_gencan.txt`. Para rodar de novo a mesma lista, esvazie esse arquivo e as tabelas (deixe só o cabeçalho).

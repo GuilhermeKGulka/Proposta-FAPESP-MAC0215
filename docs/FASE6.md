@@ -173,11 +173,11 @@ Questões em aberto:
 3. **[FEITO 22/11: versão (iv) + opção (b) de D4]**
 4. **[FEITO 22/11, junto com a maior parte do passo 5: o `gencan.f90` não precisou mudar, e o `cutestma_gpu` já sai do `cutestma.f90`. A CUTEst `pequena.txt` deu resultado idêntico ao da fase 5]** **`cgm` + `cgm_gpu`.** O desvio no `cgm`, e o `cgm_gpu` lendo `lssit%gpu` em vez do `ctx`.
    - Validação: `test_cgm_gpu`, 9/9 cenários.
-5. **[QUASE TODO FEITO no passo 4; falta remover os arquivos antigos, o que depende de confirmação, e medir (c) em problemas grandes]** **`gencan` + `cutestma`.**
+5. **[FEITO 22/11: arquivos antigos removidos; medição (c) no PLANO §6]** **`gencan` + `cutestma`.**
    - `gencan.f90` sem `ctx`, com a GPU decidida pela macro (D2(b)).
    - Remover `gencan_gpu.f90` e `cutestma_gpu.f90`.
    - Conferir que o `run-cutest-gpu.sh` continua funcionando com os dois executáveis vindos do mesmo fonte.
-6. **Limpeza.**
+6. **[FEITO 22/11: código morto e scripts obsoletos removidos; README, CLAUDE.md e PLANO atualizados]** **Limpeza.**
    - Remover o código morto e os scripts obsoletos.
    - Atualizar o `README.md` do diretório, o `CLAUDE.md` e o PLANO.
 7. **Validação final.**

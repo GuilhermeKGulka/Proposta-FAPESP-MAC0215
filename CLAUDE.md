@@ -67,9 +67,7 @@ cmake --preset cpu && cmake --build --preset cpu && ./build/cpu/toyprob_cpu
 - Para repetir uma lista no `run-cutest-gpu.sh`, esvazie `done_gencan.txt` e deixe só o cabeçalho nas tabelas.
 - `table_cpu.txt`/`table_gpu.txt` são a saída de trabalho do script. Resultados que valem como referência são copiados para `gencan-cg-standalone-gpu/resultados/` com o nome `table_{cpu,gpu}_<fase>[_<variante>].txt` e citados no PLANO §6.
 - Divergência de `iter` entre CPU e GPU: antes de tratar como bug, rode o controle CPU contra CPU com a ordem das somas invertida (PLANO §6 e §8, caso BQPGAUSS).
-- Scripts e alvos desatualizados:
-  - `compile.sh` e `run-cutest.sh` deste diretório usam alvos que não existem com esses nomes (`toyprob`, `cutestma`; hoje há `toyprob_cpu` e `cutestma_{cpu,gpu}`).
-  - O `README.md` cita arquivos fora do build (`scalar_kernels.cpp`, `gencan_gpu_context.f90`).
+- Scripts do diretório: `run-cutest-gpu.sh` (CUTEst, CPU e GPU), `run-tests.sh` (testes sintéticos) e `compare-cpu-ref.sh` (build `cpu` contra a referência). `compile.sh` e `run-cutest.sh` antigos foram removidos em 22/11/2026.
 
 ## Arquitetura (resumo; detalhes no PLANO §4)
 
