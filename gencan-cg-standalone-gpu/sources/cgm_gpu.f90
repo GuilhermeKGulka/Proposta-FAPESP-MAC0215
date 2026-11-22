@@ -1,14 +1,21 @@
+! CG do Gencan na GPU (fase 6). Chamado pelo cgm (cgm.f90, sob #ifdef GENCAN_GPU)
+! quando preparehv deixou a Hessiana da face na GPU (lssit%gpu%active).
+! Mesma interface e mesma ordem de testes do cgm original. A Hessiana e os vetores
+! de trabalho no device moram em lssit%gpu (lssit_gpu.f90), alocados uma vez;
+! p e hp sao lssit%gpu%d_x e lssit%gpu%d_y (entrada/saida do SpMV).
+! Uma sincronizacao por iteracao: update(k) + direcao/SpMV/reducoes de (k+1) sao
+! lancados em sequencia e o host decide depois. Se o CG para, o trabalho
+! especulativo (so escreve em p e hp) e descartado e d/r ja estao corretos.
 module cgm_gpu_mod
   use iso_c_binding
   use hipfort
   use hipfort_check
   use lssit
-  use hess_csr_mod
+  use lssit_gpu_mod, only: lssit_gpu_spmv
   implicit none
   private
-  public :: cgm_gpu_ctx, cgm_gpu_init, cgm_gpu_free, cgm_gpu
+  public :: cgm_gpu
 
-  integer, parameter :: MAXB = 1024
   real(kind=8), parameter :: macheps = 1.0d-16, epsnqmp = 1.0d-08, lrgstreal = huge(1.0d0)
   integer, parameter :: maxcgitnp = 5
 
@@ -42,69 +49,10 @@ module cgm_gpu_mod
     end subroutine
   end interface
 
-  type :: cgm_gpu_ctx
-    integer :: n = 0
-    type(hess_csr_type) :: h
-    type(c_ptr) :: d_g = c_null_ptr, d_d = c_null_ptr, d_p = c_null_ptr
-    type(c_ptr) :: d_hp = c_null_ptr, d_r = c_null_ptr
-    type(c_ptr) :: d_xf = c_null_ptr, d_lbf = c_null_ptr, d_ubf = c_null_ptr
-    type(c_ptr) :: d_lindf = c_null_ptr, d_uindf = c_null_ptr
-    type(c_ptr) :: d_dg = c_null_ptr, d_s = c_null_ptr, d_u = c_null_ptr
-    type(c_ptr) :: d_part = c_null_ptr, d_cnt = c_null_ptr, d_red = c_null_ptr
-    real(c_double), allocatable :: xf(:), lbf(:), ubf(:), dgf(:), sf(:), uf(:)
-    integer(c_int), allocatable :: lindf(:), uindf(:)
-  end type cgm_gpu_ctx
-
 contains
 
-  subroutine cgm_gpu_init(ctx, n, hnnzmax, do_prep)
-    type(cgm_gpu_ctx), intent(inout) :: ctx
-    integer, intent(in) :: n, hnnzmax
-    logical, intent(in) :: do_prep
-    ctx%n = n
-    call hipCheck(hipMalloc(ctx%d_g,  n * 8_c_size_t))
-    call hipCheck(hipMalloc(ctx%d_d,  n * 8_c_size_t))
-    call hipCheck(hipMalloc(ctx%d_p,  n * 8_c_size_t))
-    call hipCheck(hipMalloc(ctx%d_hp, n * 8_c_size_t))
-    call hipCheck(hipMalloc(ctx%d_r,  n * 8_c_size_t))
-    call hipCheck(hipMalloc(ctx%d_xf,  n * 8_c_size_t))
-    call hipCheck(hipMalloc(ctx%d_lbf, n * 8_c_size_t))
-    call hipCheck(hipMalloc(ctx%d_ubf, n * 8_c_size_t))
-    call hipCheck(hipMalloc(ctx%d_lindf, n * 4_c_size_t))
-    call hipCheck(hipMalloc(ctx%d_uindf, n * 4_c_size_t))
-    call hipCheck(hipMalloc(ctx%d_dg, n * 8_c_size_t))
-    call hipCheck(hipMalloc(ctx%d_s,  n * 8_c_size_t))
-    call hipCheck(hipMalloc(ctx%d_u,  n * 8_c_size_t))
-    call hipCheck(hipMalloc(ctx%d_part, MAXB * 7 * 8_c_size_t))
-    call hipCheck(hipMalloc(ctx%d_cnt, 4_c_size_t))
-    call hipCheck(hipMemset(ctx%d_cnt, 0, 4_c_size_t))
-    call hipCheck(hipMalloc(ctx%d_red, 16 * 8_c_size_t))
-    call hipCheck(hipMemset(ctx%d_red, 0, 16 * 8_c_size_t))
-    allocate(ctx%xf(n), ctx%lbf(n), ctx%ubf(n), ctx%lindf(n), ctx%uindf(n))
-    allocate(ctx%dgf(n), ctx%sf(n), ctx%uf(n))
-    call hess_csr_init(ctx%h, n, hnnzmax, ctx%d_p, ctx%d_hp, do_prep)
-  end subroutine cgm_gpu_init
-
-  subroutine cgm_gpu_free(ctx)
-    type(cgm_gpu_ctx), intent(inout) :: ctx
-    call hess_csr_free(ctx%h)
-    call hipCheck(hipFree(ctx%d_g));  call hipCheck(hipFree(ctx%d_d));  call hipCheck(hipFree(ctx%d_p))
-    call hipCheck(hipFree(ctx%d_hp)); call hipCheck(hipFree(ctx%d_r))
-    call hipCheck(hipFree(ctx%d_xf)); call hipCheck(hipFree(ctx%d_lbf)); call hipCheck(hipFree(ctx%d_ubf))
-    call hipCheck(hipFree(ctx%d_lindf)); call hipCheck(hipFree(ctx%d_uindf))
-    call hipCheck(hipFree(ctx%d_dg)); call hipCheck(hipFree(ctx%d_s)); call hipCheck(hipFree(ctx%d_u))
-    call hipCheck(hipFree(ctx%d_part)); call hipCheck(hipFree(ctx%d_cnt)); call hipCheck(hipFree(ctx%d_red))
-    deallocate(ctx%xf, ctx%lbf, ctx%ubf, ctx%lindf, ctx%uindf, ctx%dgf, ctx%sf, ctx%uf)
-  end subroutine cgm_gpu_free
-
-  ! Mesma interface do cgm original (lssit no fim). Antes: hess_csr_update(ctx%h, ...);
-  ! com precond tambem comphpre(...) na CPU.
-  ! Fase 5: UMA sincronizacao por iteracao. update(k) + direcao/SpMV/reducoes de (k+1) sao
-  ! lancados em sequencia; o host decide depois. Se o CG para, o trabalho especulativo
-  ! (so escreve em p e hp) e descartado e d/r ja estao corretos.
-  subroutine cgm_gpu(ctx, n, nfr, ifr, x, lind, lbnd, uind, ubnd, g, delta, eps, maxit, &
-                     precond, d, iter, iprint, ierr, cginfo, lssit_obj)
-    type(cgm_gpu_ctx), intent(inout), target :: ctx
+  subroutine cgm_gpu(n, nfr, ifr, x, lind, lbnd, uind, ubnd, g, delta, eps, maxit, &
+                     precond, d, iter, iprint, ierr, cginfo, lssit)
     integer, intent(in) :: n, nfr, maxit, iprint
     integer, intent(out) :: iter, ierr, cginfo
     real(kind=8), intent(in) :: delta, eps
@@ -113,7 +61,7 @@ contains
     integer, intent(in) :: ifr(nfr)
     real(kind=8), intent(in), target :: x(n), g(nfr), lbnd(n), ubnd(n)
     real(kind=8), intent(out), target :: d(n)
-    type(lssit_type), intent(in) :: lssit_obj
+    type(lssit_type), intent(in) :: lssit
 
     logical :: restarted, use_pre, corr, pending
     integer :: i, j, itnqmp, itertmp, sgn, sgnprev, upre, icorr
@@ -122,40 +70,47 @@ contains
     real(kind=8) :: c1, c2, rdr, sr, ur, sty, psmdyty
     real(c_double), target :: red(16)
     type(c_ptr) :: pdg, ps, pu
+    ! host: dados compactados pela face (como os vetores locais do cgm original)
+    real(c_double), allocatable, target :: xf(:), lbf(:), ubf(:), dgf(:), sf(:), uf(:)
+    integer(c_int), allocatable, target :: lindf(:), uindf(:)
 
     ierr = 0
-    if (nfr /= ctx%h%nfr) stop 'cgm_gpu: nfr difere da face da Hessiana (faltou hess_csr_update?)'
+    if (nfr /= lssit%gpu%nfr) stop 'cgm_gpu: nfr difere da face da Hessiana (faltou preparehv?)'
 
+    associate (gp => lssit%gpu)
+
+    allocate(xf(nfr), lbf(nfr), ubf(nfr), lindf(nfr), uindf(nfr))
     do i = 1, nfr
       j = ifr(i)
-      ctx%xf(i) = x(j);  ctx%lbf(i) = lbnd(j);  ctx%ubf(i) = ubnd(j)
-      ctx%lindf(i) = merge(1, 0, lind(j));  ctx%uindf(i) = merge(1, 0, uind(j))
+      xf(i) = x(j);  lbf(i) = lbnd(j);  ubf(i) = ubnd(j)
+      lindf(i) = merge(1, 0, lind(j));  uindf(i) = merge(1, 0, uind(j))
     end do
-    call hipCheck(hipMemcpy(ctx%d_xf,  c_loc(ctx%xf),  nfr * 8_c_size_t, hipMemcpyHostToDevice))
-    call hipCheck(hipMemcpy(ctx%d_lbf, c_loc(ctx%lbf), nfr * 8_c_size_t, hipMemcpyHostToDevice))
-    call hipCheck(hipMemcpy(ctx%d_ubf, c_loc(ctx%ubf), nfr * 8_c_size_t, hipMemcpyHostToDevice))
-    call hipCheck(hipMemcpy(ctx%d_lindf, c_loc(ctx%lindf), nfr * 4_c_size_t, hipMemcpyHostToDevice))
-    call hipCheck(hipMemcpy(ctx%d_uindf, c_loc(ctx%uindf), nfr * 4_c_size_t, hipMemcpyHostToDevice))
-    call hipCheck(hipMemcpy(ctx%d_g, c_loc(g), nfr * 8_c_size_t, hipMemcpyHostToDevice))
+    call hipCheck(hipMemcpy(gp%d_xf,  c_loc(xf),  nfr * 8_c_size_t, hipMemcpyHostToDevice))
+    call hipCheck(hipMemcpy(gp%d_lbf, c_loc(lbf), nfr * 8_c_size_t, hipMemcpyHostToDevice))
+    call hipCheck(hipMemcpy(gp%d_ubf, c_loc(ubf), nfr * 8_c_size_t, hipMemcpyHostToDevice))
+    call hipCheck(hipMemcpy(gp%d_lindf, c_loc(lindf), nfr * 4_c_size_t, hipMemcpyHostToDevice))
+    call hipCheck(hipMemcpy(gp%d_uindf, c_loc(uindf), nfr * 4_c_size_t, hipMemcpyHostToDevice))
+    call hipCheck(hipMemcpy(gp%d_g, c_loc(g), nfr * 8_c_size_t, hipMemcpyHostToDevice))
 
     corr = .false.;  sty = 1.0d0;  psmdyty = 0.0d0
     if (precond) then
-      if (lssit_obj%m + lssit_obj%p /= 0) stop 'cgm_gpu: precond so com m = p = 0'
-      sty = lssit_obj%sty
-      corr = lssit_obj%sameface .and. sty > sqrt(epsilon(1.0d0)) * lssit_obj%seucn * lssit_obj%yeucn
-      if (corr) psmdyty = lssit_obj%psmdyty
+      if (lssit%m + lssit%p /= 0) stop 'cgm_gpu: precond so com m = p = 0'
+      sty = lssit%sty
+      corr = lssit%sameface .and. sty > sqrt(epsilon(1.0d0)) * lssit%seucn * lssit%yeucn
+      if (corr) psmdyty = lssit%psmdyty
+      allocate(dgf(nfr), sf(nfr), uf(nfr))
       do i = 1, nfr
         j = ifr(i)
-        ctx%dgf(i) = lssit_obj%plspg + lssit_obj%pdiag(j)
+        dgf(i) = lssit%plspg + lssit%pdiag(j)
         if (corr) then
-          ctx%sf(i) = lssit_obj%s(j);  ctx%uf(i) = lssit_obj%psmdy(j)
+          sf(i) = lssit%s(j);  uf(i) = lssit%psmdy(j)
         else
-          ctx%sf(i) = 0.0d0;  ctx%uf(i) = 0.0d0          ! evita 0*NaN
+          sf(i) = 0.0d0;  uf(i) = 0.0d0          ! evita 0*NaN
         end if
       end do
-      call hipCheck(hipMemcpy(ctx%d_dg, c_loc(ctx%dgf), nfr * 8_c_size_t, hipMemcpyHostToDevice))
-      call hipCheck(hipMemcpy(ctx%d_s,  c_loc(ctx%sf),  nfr * 8_c_size_t, hipMemcpyHostToDevice))
-      call hipCheck(hipMemcpy(ctx%d_u,  c_loc(ctx%uf),  nfr * 8_c_size_t, hipMemcpyHostToDevice))
+      call hipCheck(hipMemcpy(gp%d_dg, c_loc(dgf), nfr * 8_c_size_t, hipMemcpyHostToDevice))
+      call hipCheck(hipMemcpy(gp%d_s,  c_loc(sf),  nfr * 8_c_size_t, hipMemcpyHostToDevice))
+      call hipCheck(hipMemcpy(gp%d_u,  c_loc(uf),  nfr * 8_c_size_t, hipMemcpyHostToDevice))
     end if
     icorr = merge(1, 0, corr)
 
@@ -175,29 +130,29 @@ contains
       c1 = 0.0d0;  c2 = 0.0d0
       sgn = 1;  sgnprev = 1
       pending = .false.
-      call hipCheck(hipMemcpy(ctx%d_r, ctx%d_g, nfr * 8_c_size_t, hipMemcpyDeviceToDevice))
-      call hipCheck(hipMemset(ctx%d_d, 0, nfr * 8_c_size_t))
-      call hipCheck(hipMemset(ctx%d_p, 0, nfr * 8_c_size_t))
+      call hipCheck(hipMemcpy(gp%d_r, gp%d_g, nfr * 8_c_size_t, hipMemcpyDeviceToDevice))
+      call hipCheck(hipMemset(gp%d_d, 0, nfr * 8_c_size_t))
+      call hipCheck(hipMemset(gp%d_x, 0, nfr * 8_c_size_t))
       if (use_pre) then
-        pdg = ctx%d_dg;  ps = ctx%d_s;  pu = ctx%d_u
-        call launch_cgm_dots0(int(nfr, c_int), ctx%d_r, ctx%d_dg, ctx%d_s, ctx%d_u, &
-                              ctx%d_part, ctx%d_cnt, ctx%d_red)
+        pdg = gp%d_dg;  ps = gp%d_s;  pu = gp%d_u
+        call launch_cgm_dots0(int(nfr, c_int), gp%d_r, gp%d_dg, gp%d_s, gp%d_u, &
+                              gp%d_part, gp%d_cnt, gp%d_red)
       else
         pdg = c_null_ptr;  ps = c_null_ptr;  pu = c_null_ptr
       end if
 
       ! direcao da iteracao 0 + SpMV + reducoes (sem o host no meio)
       call launch_cgm_update_p_dev(int(nfr, c_int), upre, icorr, sty, psmdyty, 1.0d0, 1.0d0, 1, &
-                                   ctx%d_red, ctx%d_r, ctx%d_dg, ctx%d_u, ctx%d_s, ctx%d_p)
-      call hess_csr_spmv(ctx%h)
-      call launch_cgm_dots1(int(nfr, c_int), delta, ctx%d_p, ctx%d_hp, ctx%d_d, ctx%d_g, ctx%d_r, &
-                            ctx%d_part, ctx%d_cnt, ctx%d_red)
+                                   gp%d_red, gp%d_r, gp%d_dg, gp%d_u, gp%d_s, gp%d_x)
+      call lssit_gpu_spmv(gp)
+      call launch_cgm_dots1(int(nfr, c_int), delta, gp%d_x, gp%d_y, gp%d_d, gp%d_g, gp%d_r, &
+                            gp%d_part, gp%d_cnt, gp%d_red)
 
       if (iprint >= 2) write(*, 984) iter, sqrt(rnorm2), sqrt(dnorm2), q
 
       inner: do
         ! ============ UNICA sincronizacao por iteracao ============
-        call hipCheck(hipMemcpy(c_loc(red), ctx%d_red, 15 * 8_c_size_t, hipMemcpyDeviceToHost))
+        call hipCheck(hipMemcpy(c_loc(red), gp%d_red, 15 * 8_c_size_t, hipMemcpyDeviceToHost))
 
         if (pending) then
           ! ---- testes posteriores ao update da iteracao anterior ----
@@ -293,16 +248,16 @@ contains
 
         ! ---- update(k) e, ESPECULATIVAMENTE, direcao/SpMV/reducoes de k+1 ----
         coef = real(sgn, 8) * alpha
-        call launch_cgm_update(int(nfr, c_int), coef, macheps, ctx%d_p, ctx%d_hp, ctx%d_d, ctx%d_r, &
-                               ctx%d_xf, ctx%d_lbf, ctx%d_ubf, ctx%d_lindf, ctx%d_uindf, &
-                               pdg, ps, pu, ctx%d_part, ctx%d_cnt, ctx%d_red)
+        call launch_cgm_update(int(nfr, c_int), coef, macheps, gp%d_x, gp%d_y, gp%d_d, gp%d_r, &
+                               gp%d_xf, gp%d_lbf, gp%d_ubf, gp%d_lindf, gp%d_uindf, &
+                               pdg, ps, pu, gp%d_part, gp%d_cnt, gp%d_red)
         pending = .true.
         sgnprev = sgn
         call launch_cgm_update_p_dev(int(nfr, c_int), upre, icorr, sty, psmdyty, real(sgnprev, 8), ztr, 0, &
-                                     ctx%d_red, ctx%d_r, ctx%d_dg, ctx%d_u, ctx%d_s, ctx%d_p)
-        call hess_csr_spmv(ctx%h)
-        call launch_cgm_dots1(int(nfr, c_int), delta, ctx%d_p, ctx%d_hp, ctx%d_d, ctx%d_g, ctx%d_r, &
-                              ctx%d_part, ctx%d_cnt, ctx%d_red)
+                                     gp%d_red, gp%d_r, gp%d_dg, gp%d_u, gp%d_s, gp%d_x)
+        call lssit_gpu_spmv(gp)
+        call launch_cgm_dots1(int(nfr, c_int), delta, gp%d_x, gp%d_y, gp%d_d, gp%d_g, gp%d_r, &
+                              gp%d_part, gp%d_cnt, gp%d_red)
       end do inner
       exit outer
     end do outer
@@ -310,7 +265,9 @@ contains
     iter = iter + itertmp
     if (iprint >= 1) write(*,*) 'Exit cgm_gpu with cginfo = ', cginfo
 
-    call hipCheck(hipMemcpy(c_loc(d), ctx%d_d, nfr * 8_c_size_t, hipMemcpyDeviceToHost))
+    call hipCheck(hipMemcpy(c_loc(d), gp%d_d, nfr * 8_c_size_t, hipMemcpyDeviceToHost))
+
+    end associate
 
 984 format(5X, 'CG iter = ', I7, ' rnorm = ', 1P, D10.4, ' dnorm = ', 1P, D10.4, ' q = ', 1P, D11.4)
   end subroutine cgm_gpu

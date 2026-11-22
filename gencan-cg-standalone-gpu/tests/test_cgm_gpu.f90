@@ -1,11 +1,13 @@
+! Fase 6, passo 4: o cgm com a Hessiana da face na GPU (desvio para cgm_gpu)
+! contra o cgm original, em cenarios sinteticos. Os dois lados chamam a MESMA
+! rotina cgm do Gencan; o que muda e o lssit: lsc com usegpu = .false. (caminho
+! original da CPU) e lsg com usegpu = .true. (preparehv manda a Hessiana para a
+! GPU e o cgm desvia para cgm_gpu). Criterio: mesmo iter, mesmo cginfo e
+! ||d_gpu - d_cpu|| / ||d_cpu|| <= 1e-12.
 program test_cgm_gpu
   use iso_c_binding
-  use hipfort
-  use hipfort_check
   use lssit
   use modcgm, only: cgm
-  use hess_csr_mod
-  use cgm_gpu_mod
   implicit none
 
   integer, parameter :: n = 3000, noff = 9000, hnnzmax = n + noff, nscen = 9
@@ -24,21 +26,20 @@ program test_cgm_gpu
   logical, parameter :: sface(nscen) = [.false., .false., .false., .false., .false., .false., .true., .true., .false.]
 
   integer :: hrow(hnnzmax), hcol(hnnzmax), hne, i, e, s, nfr, itc, itg, infoc, infog, ierr
-  real(8) :: hval(hnnzmax), rowsum(n), u, derr, t0c, t1c, t0g, t1g
+  real(8) :: hval(hnnzmax), rowsum(n), u, derr, t0c, t0g
   real(8) :: sv(n), yv(n), sty, sts
   integer :: inform, nfalhas
   logical :: ok
   integer(8) :: c0, c1, rate
-  logical :: frvar(n), lind(n), uind(n), changed
+  logical :: frvar(n), lind(n), uind(n)
   real(8), allocatable :: x(:), lbnd(:), ubnd(:), gfull(:), gc(:), dcpu(:), dgpu(:)
   integer, allocatable :: ifr(:)
-  type(lssit_type) :: ls
-  type(cgm_gpu_ctx) :: ctx
+  type(lssit_type) :: lsc, lsg
 
   call system_clock(count_rate=rate)
   nfalhas = 0
-  call cgm_gpu_init(ctx, n, hnnzmax, .true.)
   allocate(x(n), lbnd(n), ubnd(n), gfull(n), dcpu(n), dgpu(n))
+  call lssitini(dummy_g, .true., hnnzmax, 0, n, 0, 0, lsg)   ! GPU: um objeto so, como no Gencan
 
   do s = 1, nscen
     ! ---------- H: diagonal + off-diagonais aleatorias (COO "como vem do CUTEst") ----------
@@ -76,38 +77,38 @@ program test_cgm_gpu
     ifr = pack([(i, i = 1, n)], frvar)
     gc = gfull(ifr)
 
-    ! ---------- CPU: cgm ORIGINAL ----------
-    call lssitini(dummy_g, .true., hnnzmax, 0, n, 0, 0, ls)
-    ls%compressed = .true.
-    ls%hne = hne
-    ls%hrow(1:hne) = hrow(1:hne);  ls%hcol(1:hne) = hcol(1:hne);  ls%hval(1:hne) = hval(1:hne)
-    if (prec(s)) then                       ! como no gencan: comphpre antes de preparehv
+    if (prec(s)) then                       ! dados do comphpre: y = H s (H simetrica do triangulo)
       do i = 1, n
         call random_number(u);  sv(i) = 2.0d0 * u - 1.0d0
       end do
-      yv = 0.0d0                            ! y = H s, H simetrica a partir do COO (triangulo)
+      yv = 0.0d0
       do e = 1, hne
         yv(hrow(e)) = yv(hrow(e)) + hval(e) * sv(hcol(e))
         if (hrow(e) /= hcol(e)) yv(hcol(e)) = yv(hcol(e)) + hval(e) * sv(hrow(e))
       end do
       sty = dot_product(sv, yv);  sts = dot_product(sv, sv)
-      call comphpre(n, sv, yv, sty, sts, 1.0d-16, 1.0d16, sface(s), inform, ls)
     end if
-    call preparehv(n, nfr, frvar, ls)
+
+    ! ---------- CPU: cgm original (usegpu = .false.) ----------
+    call lssitini(dummy_g, .true., hnnzmax, 0, n, 0, 0, lsc)
+    lsc%usegpu = .false.
+    call carrega(lsc)
     dcpu = 0.0d0
     call system_clock(c0)
     call cgm(n, nfr, ifr, x, lind, lbnd, uind, ubnd, gc, delta(s), 1.0d-8, maxit(s), prec(s), &
-             dcpu, itc, 0, ierr, infoc, ls)
+             dcpu, itc, 0, ierr, infoc, lsc)
     call system_clock(c1);  t0c = real(c1 - c0, 8) / real(rate, 8) * 1d3
+    if (lsc%gpu%active) stop 'test_cgm_gpu: lsc nao deveria usar a GPU'
+    call lssitend(lsc)
 
-    ! ---------- GPU ----------
+    ! ---------- GPU: o mesmo cgm, com a Hessiana da face na GPU ----------
+    call carrega(lsg)
     dgpu = 0.0d0
-    call hess_csr_invalidate(ctx%h)
-    call hess_csr_update(ctx%h, hne, hrow, hcol, hval, frvar, changed)
     call system_clock(c0)
-    call cgm_gpu(ctx, n, nfr, ifr, x, lind, lbnd, uind, ubnd, gc, delta(s), 1.0d-8, maxit(s), prec(s), &
-                 dgpu, itg, 0, ierr, infog, ls)
+    call cgm(n, nfr, ifr, x, lind, lbnd, uind, ubnd, gc, delta(s), 1.0d-8, maxit(s), prec(s), &
+             dgpu, itg, 0, ierr, infog, lsg)
     call system_clock(c1);  t0g = real(c1 - c0, 8) / real(rate, 8) * 1d3
+    if (.not. lsg%gpu%active) stop 'test_cgm_gpu: lsg deveria usar a GPU'
 
     derr = norm2(dgpu(1:nfr) - dcpu(1:nfr)) / max(norm2(dcpu(1:nfr)), tiny(1.0d0))
     write(*,'(A,A,A,I5)') '== ', nome(s), '  nfr=', nfr
@@ -118,14 +119,23 @@ program test_cgm_gpu
     if (.not. ok) nfalhas = nfalhas + 1
     write(*,'(A,A)') '   ', merge('OK     ', 'FALHOU ', ok)
 
-    call lssitend(ls)
     deallocate(ifr, gc)
   end do
 
-  call cgm_gpu_free(ctx)
+  call lssitend(lsg)
   write(*,'(A,I0,A,I0)') 'test_cgm_gpu: falhas = ', nfalhas, ' de ', nscen
 
 contains
+  ! como no gencan: evalh (copia do COO) -> comphpre -> preparehv
+  subroutine carrega(ls)
+    type(lssit_type), intent(inout) :: ls
+    ls%compressed = .true.
+    ls%hne = hne
+    ls%hrow(1:hne) = hrow(1:hne);  ls%hcol(1:hne) = hcol(1:hne);  ls%hval(1:hne) = hval(1:hne)
+    if (prec(s)) call comphpre(n, sv, yv, sty, sts, 1.0d-16, 1.0d16, sface(s), inform, ls)
+    call preparehv(n, nfr, frvar, ls)
+  end subroutine carrega
+
   subroutine dummy_g(n, x, g, ierr, pdata)
     integer, intent(in) :: n
     real(kind=8), intent(in) :: x(n)

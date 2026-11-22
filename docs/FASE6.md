@@ -82,6 +82,50 @@ Vantagem extra: o executável CPU sai dos mesmos fontes sem a macro, e é ele qu
 
 A escolha final, com os números, vai para o changelog e para o PLANO §5.
 
+**Medição da versão (i), em 22/11/2026** (`test_hess_csr` parte B, `n = 300000`, `nnz = 1,39 M`; detalhes no changelog). Com o padrão reaproveitado, o tempo por passo de Newton é:
+- 55 ms na fase 6;
+- 1,06 ms na fase 5;
+- 23,7 ms só na compactação do `preparehv` original, que a fase 5 não fazia.
+
+A causa é estrutural: a fase 5 nunca compactava o COO na CPU. Ela guardava, uma vez por padrão, a posição de cada entrada do COO original no CSR (`pos1/pos2`), e depois só enviava `hne` valores e espalhava na GPU.
+
+**Proposta (iv) [aprovada e implementada em 22/11/2026; números no changelog]:** no modo GPU, o `preparehv` faz o ramo GPU **no lugar** da compactação na CPU, partindo do COO original do `evalh`:
+- **Detectar mudança de padrão:** comparar `hne`, `hrow/hcol` e `frvar` com a última montagem. É O(hne) em inteiros e vale para qualquer `evalh`.
+- **Montar o padrão (só quando ele muda), em vetores de trabalho do `lssit%gpu`:**
+  - renumerar e filtrar pela face (mesma regra do `preparehv`) e espelhar;
+  - rodar o `coo2csr` do orientador, adaptado para carregar, no lugar do valor, a origem de cada entrada (`+e` direta, `−e` espelhada);
+  - a partir daí, montar `row_ptr`, `col` e `pos1/pos2`, e enviar tudo.
+- **A cada passo:** enviar os `hne` valores originais e espalhar em kernel (o `launch_scatter` que já existe).
+- **Efeitos colaterais:**
+  - O COO do `lssit` não é mais destruído.
+  - A capacidade do `lssit` volta a `hnnzmax`, e o espaço do espelho fica nos vetores de trabalho.
+  - O custo esperado por passo é o da fase 5 mais a comparação da estrutura.
+- **Analogia:** continua no nível da rotina, porque o `preparehv` segue "preparando a Hessiana da face para os produtos H v". O que muda é que, no modo GPU, ele não executa a compactação da CPU. Essa é uma adaptação de desempenho justificada pelos números acima.
+
+**Resultado da (iv)** (`n = 300000`, `nnz = 1,39 M`):
+
+| | Mesmo padrão | Face nova |
+|---|---|---|
+| Fase 6 (iv) | 1,7 ms | 46 ms (`coo2csr` 32 ms) |
+| Fase 5 | 1,05 ms | 14 ms |
+
+Questões em aberto:
+- **[DECIDIDO 22/11: opção (b), contagem fora do lugar; a face nova caiu para 16 ms. A versão com o `coo2csr` está no branch `fase6-coo2csr`. A (c) vem no passo 4/5, com o Gencan rodando o caminho novo] Face nova: `coo2csr` in-place × contagem fora do lugar.**
+  - A permutação por ciclos do `coo2csr` faz acessos aleatórios a três vetores (linha, coluna, origem) e fica cerca de 3× mais lenta que a contagem da fase 5.
+  - A vantagem dele, não usar memória extra, não se aplica aqui: os vetores de trabalho já existem, porque o COO do `lssit` não é destruído.
+  - Opções:
+    - (a) manter o `coo2csr` do orientador, como pedido, e aceitar o custo na troca de face;
+    - (b) usar a contagem fora do lugar, que é a mesma ideia do `coo2csr` (contar por linha e acumular) sem o passo in-place;
+    - (c) medir no Gencan real quantas trocas de face acontecem antes de decidir.
+  - O peso disso depende de quantas vezes a face muda: nunca em `genunc`, e com frequência nas primeiras iterações de problemas com caixa.
+- **[ABERTO: conversar com o orientador] Comparação da estrutura do COO a cada passo (~0,6 ms em `nnz = 1,4 M`).** Ela garante a correção para qualquer `evalh`. A fase 5 assumia, como no CUTEst, que a estrutura é fixa e só comparava `hne` e a face.
+  - **A face não é o problema.** O Gencan sabe quando a face muda (`newface` no `gencanb`), e comparar `frvar` custa O(n), pouco. O custo está em verificar se a **estrutura** (`hrow/hcol`) que o `evalh` devolve mudou. Só quem escreveu o `evalh` sabe disso, e a interface atual não tem como informar.
+  - **Opções:**
+    - (1) manter a comparação completa, como está agora;
+    - (2) supor estrutura fixa, como na fase 5, e documentar;
+    - (3) um aviso "estrutura da Hessiana fixa", passado pelo usuário. Ele precisaria entrar como argumento de `genunc`/`gencan` (como `truehp`) ou do `evalh`, o que **muda a assinatura**. Por isso fica junto com o D2(a).
+  - Decisão provisória: (1). A medição (c) vai mostrar quanto esse custo pesa no passo de Newton em problemas grandes.
+
 ### 4.1 Opções discutidas (proposta de 21/11/2026)
 
 **D1. Como compilar sem HIP.**
@@ -118,24 +162,32 @@ A escolha final, com os números, vai para o changelog e para o PLANO §5.
 
 ## 5. Passos (cada um termina com testes e um commit que atualiza o changelog)
 
-1. **Preparação.** Criar o branch. Criar o `docs/CHANGELOG_GPU.md` com o formato combinado. Registrar a linha de base: as tabelas da fase 5 e os testes sintéticos.
-2. **CMake.** Opção `GENCAN_GPU` (AUTO/ON/OFF), `Fortran_PREPROCESS`, as duas bibliotecas com diretórios de módulos separados (D2(b)) e os alvos `toyprob_{cpu,gpu}` e `cutestma_{cpu,gpu}` a partir de um só fonte cada. Conferir que `-DGENCAN_GPU=OFF` compila sem tocar em HIP.
+1. **[FEITO 22/11]** **Preparação.** Criar o branch. Criar o `docs/CHANGELOG_GPU.md` com o formato combinado. Registrar a linha de base: as tabelas da fase 5 e os testes sintéticos.
+2. **[FEITO 22/11, exceto as duas bibliotecas, que entram no passo 3; CUTEst também ficou opcional]** **CMake.** Opção `GENCAN_GPU` (AUTO/ON/OFF), `Fortran_PREPROCESS`, as duas bibliotecas com diretórios de módulos separados (D2(b)) e os alvos `toyprob_{cpu,gpu}` e `cutestma_{cpu,gpu}` a partir de um só fonte cada. Conferir que `-DGENCAN_GPU=OFF` compila sem tocar em HIP.
    - Validação: o build OFF gera `toyprob`/`cutestma` só CPU, com resultados **bit a bit iguais** aos da referência.
 3. **`lssit` + `lssit_gpu`.**
    - Tipo GPU dentro do `lssit_type`, com `lssitini`/`lssitend`.
    - Ramo GPU do `preparehv` com o espelhamento + `coo2csr` + envio.
    - SpMV, migrando o que hoje está em `hess_csr.f90`.
    - Validação: o `test_hess_csr` passa a testar `preparehv` com `usegpu` contra `computehv` da CPU, incluindo o caso "mesmo padrão, valores novos".
-4. **`cgm` + `cgm_gpu`.** O desvio no `cgm`, e o `cgm_gpu` lendo `lssit%gpu` em vez do `ctx`.
+3. **[FEITO 22/11: versão (iv) + opção (b) de D4]**
+4. **[FEITO 22/11, junto com a maior parte do passo 5: o `gencan.f90` não precisou mudar, e o `cutestma_gpu` já sai do `cutestma.f90`. A CUTEst `pequena.txt` deu resultado idêntico ao da fase 5]** **`cgm` + `cgm_gpu`.** O desvio no `cgm`, e o `cgm_gpu` lendo `lssit%gpu` em vez do `ctx`.
    - Validação: `test_cgm_gpu`, 9/9 cenários.
-5. **`gencan` + `cutestma`.**
+5. **[FEITO 22/11: arquivos antigos removidos; medição (c) no PLANO §6]** **`gencan` + `cutestma`.**
    - `gencan.f90` sem `ctx`, com a GPU decidida pela macro (D2(b)).
    - Remover `gencan_gpu.f90` e `cutestma_gpu.f90`.
    - Conferir que o `run-cutest-gpu.sh` continua funcionando com os dois executáveis vindos do mesmo fonte.
-6. **Limpeza.**
+6. **[FEITO 22/11: código morto e scripts obsoletos removidos; README, CLAUDE.md e PLANO atualizados]** **Limpeza.**
    - Remover o código morto e os scripts obsoletos.
    - Atualizar o `README.md` do diretório, o `CLAUDE.md` e o PLANO.
-7. **Validação final.**
+7. **[FEITO 22/11 nos dois backends]** **Validação final.**
+   - **AMD:**
+     - testes sintéticos 6/6 e 9/9;
+     - `pequena.txt` idêntica à fase 5 nos dois modos de `precond` (`resultados/table_*_fase6_{pre,nopre}.txt`);
+     - build `cpu` idêntico à referência.
+   - **NVIDIA (RTX 5070 Ti):**
+     - testes 6/6 e 9/9;
+     - `pequena.txt` com `iter`/`fcnt`/`gcnt`/`hcnt` idênticos aos da CPU nos 6 problemas bem comportados. O BQPGAUSS variou por arredondamento, como previsto no §6 (`resultados/table_*_fase6_pre_nvidia.txt`).
    - Testes sintéticos.
    - `pequena.txt` nos dois modos de `precond`, comparado com `resultados/table_*_fase5_*.txt`.
    - Build com `GENCAN_GPU=OFF`.

@@ -69,7 +69,8 @@ Todos em `gencan-cg-standalone-gpu/` (fontes em `sources/`, testes em `tests/`).
 | `tests/test_cgm_gpu.f90` | novo | Etapas 3–4: `cgm_gpu` contra `cgm` original em cenários sintéticos. Tem **9 cenários** (7–9 com precondicionador) e imprime OK/FALHOU por cenário. |
 | `run-cutest-gpu.sh` | escrito na conversa | **Já tem o conteúdo novo** (conferido em 21/11): roda `cutestma_cpu` e `cutestma_gpu` por problema → `table_cpu.txt`/`table_gpu.txt`, retomável via `done_gencan.txt`. Não existe `run_cutest_gpu.sh`. |
 | `run-tests.sh` | escrito na conversa | Compila e roda `test_hess_csr` e `test_cgm_gpu`. Funciona: o alvo `test_hess_csr` voltou ao `CMakeLists.txt` em 21/11 (tinha sido removido em bff320c). |
-| `run-cutest.sh`, `compile.sh` | tentativa antiga | Obsoletos: usam alvos `cutestma`/`toyprob`, que não existem mais. `README.md` também está desatualizado. |
+| `run-cutest.sh`, `compile.sh` | tentativa antiga | **Removidos em 22/11/2026** (fase 6, passo 6). O `README.md` foi reescrito para a estrutura da fase 6. |
+| `CMakeLists.txt`, `CMakePresets.json` | fase 6, passo 2 (22/11) | GPU opcional (`GENCAN_GPU` AUTO/ON/OFF) e CUTEst opcional. Presets `amd`/`nvidia` (GPU obrigatória) e `cpu` (sem HIP). Ver §4.5. |
 
 ### 4.2 `hess_csr_mod` (Hessiana CSR por face)
 
@@ -121,7 +122,26 @@ Layout de `d_red` (fase 5):
 
 ### 4.5 CMake (alvos esperados)
 
+Desde a fase 6, passo 2 (22/11/2026):
+- **`GENCAN_GPU`** (`AUTO` por padrão):
+  - `AUTO` procura o backend de `HIP_PLATFORM` (amd: hipfort, hip, hipsparse, hipblas, hipcc e compilador C++; nvidia: hipfort nvptx, CUDA Toolkit, hipsparse/hipblas para CUDA e hipcc). Se faltar algo, avisa o que falta e compila só a CPU.
+  - `ON` aborta listando o que falta.
+  - `OFF` nem procura.
+  - A lógica de busca é a dos `Generic-SpMV-API-Benchmarks`, testada em ROCm e CUDA. Só deixou de ser fatal.
+- **Presets:** `amd` e `nvidia` usam `GENCAN_GPU=ON`; `cpu` usa `OFF` e gera `build/cpu`.
+- **CUTEst opcional:** sem as variáveis do `env_cutest.sh`, os alvos `cutestma_*` não são criados.
+- **Módulos:** os de `gencan_cpu` ficam em `mod/cpu` e os da parte GPU em `mod/gpu`, preparando a segunda compilação dos mesmos fontes com `-DGENCAN_GPU` (D2(b)).
+- **Pré-processamento:** `lssit/cgm/gencan` são compilados com `Fortran_PREPROCESS ON` (`-cpp`).
+- **Verificado em 22/11:**
+  - o build `cpu` não liga nada de HIP (`ldd`);
+  - a saída de `toyprob_cpu` e `cutestma_cpu` é **idêntica** à da referência compilada pelos scripts dela, nos 7 problemas da `pequena.txt` (fora a linha de tempo);
+  - nvidia AUTO sem CUDA cai para só CPU, e nvidia ON aborta;
+  - amd AUTO com `hip` ausente (simulado) cai para só CPU;
+  - preset `amd`: testes 5/5 e 9/9 e ROSENBR igual em CPU e GPU.
+  - O build NVIDIA com CUDA ainda não foi testado com o código novo **[NÃO VERIFICADO]**.
+
 ```
+toyprob_cpu  : sources/toyprob.f90                            (liga gencan_cpu; sempre)
 gencan_cpu   : sources/lssit.f90 cgm.f90 gencan.f90          (referência, inalterados)
 hsgen        : sources/hipsparse_generic.f90
 gpucore      : sources/hess_csr.f90 cgm_gpu.f90              (liga hsgen, hipfort_backend, gencan_cpu)
@@ -154,6 +174,13 @@ cutestma_gpu : sources/cutestma_gpu.f90 + ${DECODED_SRCS} + ${CUTEST_LIB}  (liga
     - estado da GPU no `lssit_type`;
     - CSR montado por espelhamento + `coo2csr` do orientador dentro do `preparehv`, a medir contra o scatter;
     - trabalho no branch `fase6`.
+12. Fase 6, D4 medido (22/11/2026):
+    - No modo GPU, o `preparehv` **não faz a compactação da CPU**. Ele parte do COO original, monta o padrão (espelho + `coo2csr` com a origem de cada entrada → `pos1/pos2`) só quando a estrutura ou a face mudam, e a cada passo envia os valores e espalha por kernel.
+    - Resultado: 1,7 ms por passo, contra 55 ms da versão com a compactação e 1,05 ms da fase 5.
+    - Toda a memória da GPU é alocada uma vez.
+    - Em aberto: `coo2csr` in-place × contagem na troca de face (46 contra 14 ms), e comparação completa da estrutura (+0,65 ms/passo). Ver `docs/FASE6.md` §4.0.
+    - Decidido em 22/11: contagem fora do lugar, como os dois primeiros laços do `coo2csr`, mas sem a permutação por ciclos. A face nova custa 16 ms (fase 5: 14). A versão com o `coo2csr` está no branch `fase6-coo2csr`.
+    - A comparação completa da estrutura fica, por segurança (~0,6 ms por passo, limitada pela banda de memória). Será reavaliada com o perfil do Gencan real.
 
 ---
 
@@ -203,13 +230,77 @@ Controle: rodei o `cgm` da **CPU** com os produtos internos somados em ordem rev
 
 **Tempos**: a GPU é mais lenta nesses n pequenos. Parte (~0.12 s fixos) é custo de `cgm_gpu_init` (handles do hipSPARSE, alocações) dentro da região medida. O `cutestma` mede com `cpu_time`, que não é tempo de parede com GPU.
 
+**Fase 6, até o passo 4 (22/11/2026)** — histórico completo no `docs/CHANGELOG_GPU.md`:
+- **Testes:**
+  - `test_hess_csr`: 6/6. É o `preparehv` com GPU contra o `preparehv` + `computehv` da CPU, mais a medição D4.
+  - `test_cgm_gpu`: 9/9. É o mesmo `cgm` com `usegpu = .false.` e com a GPU.
+  - Os testes não precisam mais de `invalidate`: o `lssit_gpu` detecta sozinho a mudança de estrutura.
+- **Build `cpu`:** `compare-cpu-ref.sh` dá 0 diferenças contra a referência.
+- **CUTEst `pequena.txt`, `precond = .true.`:** CPU e GPU com **todos os campos idênticos aos da fase 5**, fora o tempo, inclusive o BQPGAUSS (118). Tabelas em `resultados/table_{cpu,gpu}_fase6_pre.txt`.
+- **CUTEst `pequena.txt`, `precond = .false.`** (passo 7; o `cutestma.f90` foi alterado só durante a rodada e depois restaurado): também idênticos à fase 5 em todos os campos, com o BQPGAUSS em 97/90 como na fase 5. Tabelas em `resultados/table_{cpu,gpu}_fase6_nopre.txt`.
+- **NVIDIA (RTX 5070 Ti, gfortran 13.3, 22/11/2026):** build OK (`CMAKE_PREFIX_PATH="$HOME/hip-nv:$HOME/hipfort"`).
+  - `test_hess_csr` 6/6 (erro ≤ 2e-16) e `test_cgm_gpu` 9/9 (`d` com erro ≤ 1,7e-15).
+  - Isso confirma que o cuSPARSE aceita colunas fora de ordem dentro da linha do CSR.
+  - SpMV com `nnz = 1,39 M`: 0,039 ms, contra 0,065 ms no AMD.
+- **CUTEst `pequena.txt` no NVIDIA** (`precond = .true.`; tabelas em `resultados/table_{cpu,gpu}_fase6_pre_nvidia.txt`):
+  - Nos 6 problemas bem comportados, `iter`/`fcnt`/`gcnt`/`hcnt` são idênticos entre CPU e GPU, e iguais aos do AMD. O `f` concorda em ≥ 1e-13.
+  - BQPGAUSS: CPU 89 contra GPU 102 (no AMD a GPU deu 118). É o caso sensível a arredondamento (§8.10): a ordem das reduções muda com a placa. Os dois convergem.
+  - O custo fixo da GPU é ~0,45 s, contra 0,12 s no AMD. O BQPGAUSS na GPU levou 5,6 s de `cpu_time`, mas esse número não é confiável: o `cpu_time` conta a espera ativa da CPU pela GPU. Precisa medir em tempo de parede (§7.2).
+- **Fase 6 validada nos dois backends (22/11/2026).**
+- **Padrões novos por chamada de `preparehv`:** 1 nos problemas sem caixa. Nos com caixa, quase todo passo: BQPGAUSS 109/111, TORSION1 23/23, OBSTCLAE 21/21.
+
+**Fase 6, medição (c): 18 problemas com caixa e `n ≥ 10000` (`grandes_bound.txt`, 22/11/2026).**
+- Configuração: `precond = .true.`, limite de 600 s de CPU por execução. Os tempos são o `cpu_time` do `cutestma`.
+- Tabelas em `resultados/table_{cpu,gpu}_fase6_grandes_bound.txt`.
+
+| Problema | n | CPU (s) | GPU (s) | iter CPU/GPU | padrões novos / `preparehv` | `preparehv` GPU, total (ms) |
+|---|---|---|---|---|---|---|
+| CVXBQP1 | 100000 | 0,04 | 0,16 | 1/1 | 1/1 | 8 |
+| CYCLOOCTLS | 30000 | 5,99 | **2,55** | 143/156 (a) | 1/156 | 114 |
+| DEGDIAG | 100001 | 0,02 | 0,13 | 1/1 | 1/1 | 5 |
+| DEGTRID | 100001 | 1,10 | **0,26** | 3/3 | 1/3 | 8 |
+| DEGTRID2 | 100001 | 0,03 | 0,14 | 1/1 | 1/1 | 6 |
+| JNLBRNG2 | 10000 | 0,28 | 0,33 | 24/24 | 12/13 | 10 |
+| JNLBRNGA | 10000 | 0,14 | 0,27 | 36/36 | 18/18 | 15 |
+| JNLBRNGB | 10000 | 0,39 | 0,37 | 22/22 | 7/15 | 10 |
+| NCVXBQP1 | 50000 | 0,02 | 0,13 | 1/1 | 1/1 | 6 |
+| NCVXBQP2 | 10000 | 0,03 | 0,15 | 26/26 | 17/22 | 11 |
+| NCVXBQP3 | 10000 | 0,02 | 0,15 | 17/17 | 11/14 | 8 |
+| OBSTCLAE | 10000 | 0,15 | 0,28 | 38/38 | 21/21 | 17 |
+| OBSTCLAL | 10000 | 0,14 | 0,29 | 41/41 | 21/21 | 18 |
+| OBSTCLBL | 10000 | 0,17 | 0,29 | 57/57 | 43/43 | 30 |
+| OBSTCLBM | 10000 | 0,07 | 0,19 | 21/21 | 15/16 | 14 |
+| OBSTCLBU | 10000 | 0,13 | 0,26 | 44/44 | 28/28 | 23 |
+| ODNAMUR | 11130 | 448,9 | **87,7** (5,1×) | 283/257 (b) | 243/245 | **11904** (14% do tempo GPU) |
+| WALL50 | 37311 | 486,5 | **61,8** (7,9×) | 544/566 (c) | 490/563 | 1381 (2%) |
+
+- (a) **CYCLOOCTLS, arredondamento:** a CPU com os produtos internos do `cgm` somados em ordem reversa faz **164** iterações (contra 143 na ordem normal). As três versões convergem (`gpsupn ≤ eps`). Não é bug.
+- (b) **ODNAMUR:**
+  - O controle com as somas em ordem reversa faz **285** iterações, contra 283 na ordem normal. Os três convergem (`istop = 0`), com `f` igual a ~1e-14.
+  - A trajetória é sensível à ordem das somas, então a diferença é compatível com arredondamento. Mas a perturbação do controle é menor que a da GPU (257), então não é uma prova.
+- (c) WALL50: os dois modos param por falta de progresso (`istop = 8`), então as iterações não são comparáveis.
+- **Fora (a)–(c):** `iter`/`fcnt`/`gcnt`/`hcnt` idênticos, e `f` igual em até 1e-14.
+- **Leitura:**
+  - Com o `n` padrão do SIF, a maioria desses problemas converge em poucos passos, e a GPU perde pelo custo fixo (~0,12 s, a medir em tempo de parede, §7.2).
+  - Onde há trabalho de verdade (ODNAMUR, WALL50, CYCLOOCTLS, DEGTRID), a GPU ganha de 2× a 8×.
+  - **A montagem do padrão pesa no ODNAMUR:** 49 ms por `preparehv`, com a face mudando em 243 de 245 passos, o que dá 14% do tempo GPU.
+    - O COO tem `hne = 9,4 M` entradas, e a face usa só `nfr = 5512` das 11130 variáveis (`nnz` da face = 3,9 M).
+    - A cada passo sobem os 9,4 M valores (~75 MB), a estrutura é comparada (mais ~75 MB lidos) e o padrão é remontado em três passadas pelo COO.
+    - Candidatos a otimização (§7.3): enviar só os valores das entradas mantidas pela face, ou montar o padrão na GPU. Isso depende de perfil.
+
 ---
 
 ## 7. Pendências e próximos passos (ordem sugerida)
 
 ### 7.1 Imediato (validação das fases 4–5)
 
-Situação em 21/11/2026: **todos os itens do §7.1 estão feitos**, e a fase 5 está validada (§6). Em 22/11/2026 o plano da fase 6 foi aprovado (§7.5, `docs/FASE6.md`).
+Situação em 21/11/2026: **todos os itens do §7.1 estão feitos**, e a fase 5 está validada (§6). Em 22/11/2026 o plano da fase 6 foi aprovado (§7.5, `docs/FASE6.md`), e os passos 1–4 foram feitos no mesmo dia, no branch `fase6`.
+
+Próximos passos da fase 6:
+- passo 5: remover `gencan_gpu.f90`/`cutestma_gpu.f90`, que dependem de confirmação;
+- (c): medir em problemas CUTEst grandes, com uma lista filtrada por `n` mínimo. **Avisar antes, porque é experimento longo**;
+- passo 6: limpeza;
+- passo 7: validação final, incluindo NVIDIA e a variante `precond = .false.`.
 
 1. **[FEITO]** **Igualar `precond`** nos dois `cutestma` e rodar duas rodadas: `false/false` e `true/true` (`grep -n "precond *=" sources/cutestma*.f90`). Conferir `gcnt` iguais e `BQPGAUSS`. Se ainda divergir com `precond` igual: rodar com `iprint = 3` dos dois lados e comparar a trajetória.
 2. **[FEITO, com 9 cenários]** **Completar `tests/test_cgm_gpu.f90` com 8 cenários**: 7 = SPD com precond, 8 = SPD com bounds e precond. Para cada cenário com precond: sortear `s`, calcular `y = H s` (H simétrica a partir do COO), `sty`, `sts`, chamar `comphpre(n, s, y, sty, sts, 1d-16, 1d16, .true., inform, ls)` antes do `cgm`/`cgm_gpu`; passar `prec(s)` no lugar de `.false.` e `ls` no final da chamada `cgm_gpu`. `nscen = 8`, novo array `prec`.
@@ -219,12 +310,18 @@ Situação em 21/11/2026: **todos os itens do §7.1 estão feitos**, e a fase 5 
 ### 7.2 Medição justa de desempenho
 
 5. Medir com **tempo de parede** (`system_clock`) em `cutestma_cpu` e `cutestma_gpu`.
+   - **`cpu_time` não serve para a GPU:** no NVIDIA, a espera ativa do runtime do CUDA entra no `cpu_time` (BQPGAUSS: 5,6 s na GPU contra 0,57 s na CPU). Usar tempo de parede nos dois modos.
+   - **Limite de tempo por execução:** o `run-cutest-gpu.sh` usa `ulimit -St 600`, que é tempo de CPU. Nos benchmarks de desempenho ele deve ser retirado ou bem maior, porque a vantagem da GPU cresce justamente nos problemas que demoram (observação do usuário, 22/11/2026). A medição (c) da fase 6 ainda rodou com 600 s.
 6. Tirar `cgm_gpu_init` da região medida (contexto criado uma vez, ou medir separadamente), ou reportar "tempo total" e "tempo do laço" separados.
 7. Benchmark com n grande: `test_cgm_gpu` com `n = 300000`, `noff = 900000` (antes/depois da fase 5); problemas CUTEst grandes (ex.: `YATP1CLS`, `YATP2CLS`, `FMINSURF`, `POWER`, `CURLY*`, `NCB20*`, séries `TORSION*`, `OBSTCL*`, `JNLBRNG*`, `DEGTRID*`). Lista completa em `problems.txt`.
 8. Perfilar (rocprof): quanto vai em H2D por iteração de Newton (COO + compactações), `hess_csr_update`, SpMV, kernels e sincronizações.
 
 ### 7.3 Otimizações futuras (só depois de medir)
 
+- **Montagem da Hessiana da face quando o COO é grande e a face é pequena** (caso ODNAMUR, §6: 49 ms por passo, 14% do tempo GPU). Opções:
+  - enviar só os valores das entradas mantidas pela face, juntando-os no host a partir de uma lista de índices guardada na montagem;
+  - montar o padrão na GPU;
+  - a comparação da estrutura sem o aviso de estrutura fixa (§7.5) também entra nessa conta.
 - Manter `x/lbnd/ubnd/lind/uind` compactados na GPU entre chamadas quando a face não muda.
 - Reduzir cópias H2D por iteração de Newton (hoje: COO `hne` doubles + compactações + `g`).
 - Fundir kernels (`update_p` + `dots`), ou usar HIP Graphs para as 4 chamadas por iteração.
@@ -263,6 +360,13 @@ O pedido:
 - D5: código em `gencan-cg-standalone-gpu/`.
 - D6: branch `fase6`.
 
+**Para conversar com o orientador [ABERTO]:**
+1. **Mudar a assinatura de `genunc`/`gencan`.**
+   - Para escolher CPU/GPU em tempo de execução: argumento `usegpu`, que é o D2(a).
+   - Para o usuário avisar que a estrutura da Hessiana devolvida pelo `evalh` é fixa: evitaria comparar `hrow/hcol` a cada passo, ~0,6 ms em `nnz = 1,4 M` (`docs/FASE6.md` §4.0).
+   - As duas mudanças são do mesmo tipo e podem ser decididas juntas.
+2. **Conversão COO → CSR** (explicação completa, com corretude e eficiência, em `docs/CONVERSAO_CSR.md`). Usamos contagem por linha com colocação fora do lugar, que mantém os dois primeiros laços do `coo2csr` dele. A permutação in-place por ciclos ficou cerca de 3× mais lenta na troca de face (46 contra 16 ms), e nos problemas com caixa a face muda em quase todo passo. A versão com o `coo2csr` está no branch `fase6-coo2csr`.
+
 Perguntas originais (respondidas no plano acima):
 - Como escolher CPU ou GPU: opção do CMake (por exemplo `-DUSE_GPU=ON`, ligada só se o HIP for encontrado) com pré-processador (`#ifdef` em `.F90`), ou módulos separados escolhidos na hora de linkar. E se a escolha também existe em tempo de execução (um parâmetro como `truehp`/`precond`).
 - Onde fica o código único: `gencan-cg-standalone/` continua sendo a referência intocada que serve de linha de base. O código unificado provavelmente nasce em `gencan-cg-standalone-gpu/`.
@@ -285,7 +389,7 @@ Perguntas originais (respondidas no plano acima):
 3. **`hess_csr_update` só refaz o padrão se a face/`hne` mudam**: testes sintéticos com COO novo precisam de `hess_csr_invalidate`. Sem isso, o cenário 6 do `test_cgm_gpu` dava erro 1.0.
 4. **Edição manual do `gencan.f90`**: houve reticências literais (`call gencanb(..., evalstp,...)`), `ctx` não declarado e bloco duplicado em `genunc`. O `ctx` é local em `genunc`/`gencan`; só `genuncb`/`gencanb` o recebem como argumento.
 5. **`gcnt` não bate se `precond` for diferente** entre os `cutestma`.
-6. Scripts: o `run-cutest-gpu.sh` atual já roda CPU e GPU. `run-cutest.sh` e `compile.sh` são obsoletos, e `run-tests.sh` depende do alvo `test_hess_csr`, que sumiu do CMake.
+6. Scripts: o `run-cutest-gpu.sh` atual já roda CPU e GPU. `run-cutest.sh` e `compile.sh` eram obsoletos e foram removidos na fase 6.
 7. O script marca "falhou compilar" sem mostrar o motivo: ver `build/<preset>/logs/<PROBLEMA>.log`.
 8. **gfortran não aceita `target` em componente de tipo derivado.** O atributo vem do dummy: um argumento `type(...), target :: h` torna `c_loc(h%comp)` válido.
 9. `run-cutest-gpu.sh` pula tudo o que está em `done_gencan.txt`. Para rodar de novo a mesma lista, esvazie esse arquivo e as tabelas (deixe só o cabeçalho).
@@ -314,6 +418,9 @@ paste -d'\n' table_cpu.txt table_gpu.txt | less -S
 cmake --preset amd -DPROBLEM=ROSENBR
 cmake --build --preset amd --target cutestma_cpu cutestma_gpu
 (cd build/amd && ./cutestma_cpu | tail -15 && ./cutestma_gpu | tail -15)
+
+# So CPU, sem HIP/ROCm/CUDA (e sem CUTEst, se o env nao estiver carregado)
+cmake --preset cpu && cmake --build --preset cpu && ./build/cpu/toyprob_cpu
 ```
 
 Critério de aceitação geral: `iter`, `fcnt`, `gcnt`, `hcnt`, `f`, `gpsupn` iguais (ou muito próximos) entre CPU e GPU **com o mesmo `precond`**. Diferenças de arredondamento nas somas podem separar trajetórias em problemas mal condicionados; se acontecer em um bem condicionado, tratar como bug.

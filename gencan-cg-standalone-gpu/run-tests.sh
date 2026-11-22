@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-source ../env_cutest.sh          # o CMakeLists exige as variaveis do CUTEst
+source ../env_cutest.sh          # opcional para os testes; mantem o PROBLEM do cache valido
 PRESET="${PRESET:-amd}"
 cmake --preset "$PRESET" > /dev/null
 cmake --build --preset "$PRESET" --target test_hess_csr test_cgm_gpu

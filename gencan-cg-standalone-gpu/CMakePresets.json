@@ -4,26 +4,38 @@
   "configurePresets": [
     {
       "name": "amd",
-      "displayName": "AMD (ROCm)",
+      "displayName": "AMD (ROCm), GPU obrigatoria",
       "binaryDir": "${sourceDir}/build/amd",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
+        "GENCAN_GPU": "ON",
         "HIP_PLATFORM": "amd",
         "CMAKE_PREFIX_PATH": "/opt/rocm"
       }
     },
     {
       "name": "nvidia",
-      "displayName": "NVIDIA (CUDA)",
+      "displayName": "NVIDIA (CUDA), GPU obrigatoria",
       "binaryDir": "${sourceDir}/build/nvidia",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
+        "GENCAN_GPU": "ON",
         "HIP_PLATFORM": "nvidia"
+      }
+    },
+    {
+      "name": "cpu",
+      "displayName": "So CPU (sem HIP/ROCm/CUDA)",
+      "binaryDir": "${sourceDir}/build/cpu",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "GENCAN_GPU": "OFF"
       }
     }
   ],
   "buildPresets": [
     { "name": "amd", "configurePreset": "amd" },
-    { "name": "nvidia", "configurePreset": "nvidia" }
+    { "name": "nvidia", "configurePreset": "nvidia" },
+    { "name": "cpu", "configurePreset": "cpu" }
   ]
 }

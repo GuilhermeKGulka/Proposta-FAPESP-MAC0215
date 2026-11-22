@@ -2,6 +2,9 @@ module modcgm
 
     use lssit
     use iso_c_binding, only: c_ptr
+#ifdef GENCAN_GPU
+    use cgm_gpu_mod, only: cgm_gpu
+#endif
 
     implicit none
 
@@ -40,10 +43,19 @@ module modcgm
         !LOCAL ARRAYS
         real(kind=8) :: p(nfr),hp(nfr),r(nfr),z(nfr),xaux(n),rfull(n),zfull(n)
         
+#ifdef GENCAN_GPU
+        ! Hessiana da face na GPU (preparehv): o CG inteiro roda na GPU (cgm_gpu.f90)
+        if ( lssit%gpu%active ) then
+            call cgm_gpu(n,nfr,ifr,x,lind,lbnd,uind,ubnd,g,delta,eps,maxit, &
+                         precond,d,iter,iprint,ierr,cginfo,lssit)
+            return
+        end if
+#endif
+
         ! ==================================================================
         ! Initialization
         ! ==================================================================
-        if ( iprint .ge. 1 ) then 
+        if ( iprint .ge. 1 ) then
             if ( precond ) then 
                 write(*,*) 'Preconditioner CG start:'
             else

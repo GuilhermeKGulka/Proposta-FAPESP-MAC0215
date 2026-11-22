@@ -1,6 +1,9 @@
 module lssit
   use iso_c_binding, only: c_ptr
-  
+#ifdef GENCAN_GPU
+  use lssit_gpu_mod, only: lssit_gpu_type, lssit_gpu_prepare, lssit_gpu_free
+#endif
+
   implicit none
 
   interface
@@ -26,6 +29,11 @@ module lssit
      integer :: n,m,p,hnnzmax,hne,jnnzmax,jne,infohapp
      logical :: compressed,sameface,truehp
      real(kind=8) :: rho,sty,seucn,yeucn,plspg,psmdyty,hstds,hlspg
+#ifdef GENCAN_GPU
+     ! Hessiana da face na GPU (lssit_gpu.f90); usegpu = .false. volta ao caminho original
+     logical :: usegpu = .true.
+     type(lssit_gpu_type) :: gpu
+#endif
   end type lssit_type
 
   private
@@ -90,6 +98,10 @@ contains
     ! LOCAL SCALARS
     integer :: allocerr
 
+#ifdef GENCAN_GPU
+    call lssit_gpu_free(lssit%gpu)
+#endif
+
     deallocate(lssit%hrow,lssit%hcol,lssit%hval,&
              lssit%jsta,lssit%jlen,lssit%jvar,&
              lssit%jval,lssit%constrin,stat=allocerr)
@@ -118,6 +130,18 @@ contains
 
     ! LOCAL ARRAYS
     integer :: renumbered(n)
+
+#ifdef GENCAN_GPU
+    ! Modo GPU: a Hessiana da face vai para a GPU (CSR) direto do COO do evalh,
+    ! sem a compactacao abaixo, que so serve ao produto H v da CPU (adaptacao de
+    ! desempenho, ver docs/CHANGELOG_GPU.md). O COO do lssit fica intacto.
+    lssit%gpu%active = .false.
+    if ( lssit%usegpu .and. lssit%truehp .and. lssit%compressed ) then
+      call lssit_gpu_prepare(lssit%gpu,n,lssit%hnnzmax,frvar,lssit%hne, &
+                             lssit%hrow,lssit%hcol,lssit%hval)
+      return
+    end if
+#endif
 
     if ( n .ne. nfr) then
       renumbered(1:n) = unpack( (/ (i,i=1,nfr) /), frvar(1:n), 0 )
@@ -167,7 +191,7 @@ contains
       end if
     end if
 
-  end subroutine preparehv 
+  end subroutine preparehv
 
   ! *****************************************************************
   ! *****************************************************************
