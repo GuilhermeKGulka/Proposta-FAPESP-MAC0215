@@ -167,32 +167,28 @@ if(GPU_ENABLED)
   target_link_libraries(hsgen PUBLIC hipfort_backend)
   target_include_directories(hsgen PUBLIC ${CMAKE_BINARY_DIR}/mod/gpu)
 
-  # Gencan GPU da fase 6: os MESMOS fontes de gencan_cpu, com -DGENCAN_GPU, mais a
-  # Hessiana na GPU (lssit_gpu.f90). Modulos em mod/gpu6 (lssit.mod etc. tem o
-  # mesmo nome dos da CPU). Nome provisorio: vira gencan_gpu no passo 5.
-  add_library(gencan_gpu6 STATIC ${GENCAN_SRCS} sources/lssit_gpu.f90)
-  target_compile_definitions(gencan_gpu6 PRIVATE GENCAN_GPU)
-  set_target_properties(gencan_gpu6 PROPERTIES Fortran_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/mod/gpu6)
-  target_include_directories(gencan_gpu6 PUBLIC ${CMAKE_BINARY_DIR}/mod/gpu6)
-  target_link_libraries(gencan_gpu6 PUBLIC hsgen kernels hipfort_backend)   # kernels: scatter
+  # Gencan GPU: os MESMOS fontes de gencan_cpu, com -DGENCAN_GPU, mais a Hessiana
+  # da face na GPU (lssit_gpu.f90) e o CG na GPU (cgm_gpu.f90). Modulos em
+  # mod/gencan_gpu (lssit.mod etc. tem o mesmo nome dos da CPU).
+  add_library(gencan_gpu STATIC ${GENCAN_SRCS} sources/lssit_gpu.f90 sources/cgm_gpu.f90)
+  target_compile_definitions(gencan_gpu PRIVATE GENCAN_GPU)
+  set_target_properties(gencan_gpu PROPERTIES Fortran_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/mod/gencan_gpu)
+  target_include_directories(gencan_gpu PUBLIC ${CMAKE_BINARY_DIR}/mod/gencan_gpu)
+  target_link_libraries(gencan_gpu PUBLIC hsgen kernels hipfort_backend)
 
-  # caminho da fase 5 (sai nos passos 4-5): hess_csr nao usa lssit; cgm_gpu usa o da CPU
+  add_executable(toyprob_gpu sources/toyprob.f90)
+  target_link_libraries(toyprob_gpu PRIVATE gencan_gpu)
+
+  # hess_csr.f90 (fase 5) so para comparar tempos no test_hess_csr; nao usa lssit
   add_library(hesscsr STATIC sources/hess_csr.f90)
   target_link_libraries(hesscsr PUBLIC hsgen hipfort_backend)
 
-  add_library(gpucore STATIC sources/cgm_gpu.f90)
-  target_link_libraries(gpucore PUBLIC hesscsr hsgen hipfort_backend gencan_cpu)
-
-  add_library(gencan_gpu STATIC sources/gencan_gpu.f90)
-  target_link_libraries(gencan_gpu PUBLIC gpucore)
-
-  # test_hess_csr: lssit GPU (usegpu) contra lssit CPU (usegpu = .false.), ambos de
-  # gencan_gpu6; hesscsr so para medir contra a fase 5
+  # testes: lssit/cgm com usegpu (padrao) contra usegpu = .false., no mesmo executavel
   add_executable(test_hess_csr tests/test_hess_csr.f90)
-  target_link_libraries(test_hess_csr PRIVATE gencan_gpu6 hesscsr kernels hsgen hipfort_backend)
+  target_link_libraries(test_hess_csr PRIVATE gencan_gpu hesscsr)
 
   add_executable(test_cgm_gpu tests/test_cgm_gpu.f90)
-  target_link_libraries(test_cgm_gpu PRIVATE gpucore gencan_cpu kernels hsgen hipfort_backend)
+  target_link_libraries(test_cgm_gpu PRIVATE gencan_gpu)
 endif()
 
 # ---- CUTEst (opcional): decodifica o problema (sifdecoder) e linka libcutest ----
@@ -245,9 +241,10 @@ if(CUTEST_ENABLED)
   target_link_libraries(cutestma_cpu PRIVATE gencan_cpu ${CUTEST_LIB})
 
   if(GPU_ENABLED)
-    add_executable(cutestma_gpu sources/cutestma_gpu.f90 ${DECODED_SRCS})
+    # mesmo fonte do cutestma_cpu, linkado contra o Gencan GPU (D2(b))
+    add_executable(cutestma_gpu sources/cutestma.f90 ${DECODED_SRCS})
     target_include_directories(cutestma_gpu PRIVATE "${CUTEST_MOD_DIR}")
-    target_link_libraries(cutestma_gpu PRIVATE gencan_gpu gpucore kernels hsgen ${CUTEST_LIB} hipfort_backend)
+    target_link_libraries(cutestma_gpu PRIVATE gencan_gpu ${CUTEST_LIB})
   endif()
 endif()
 

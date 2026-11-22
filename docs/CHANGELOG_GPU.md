@@ -41,7 +41,10 @@ Resultados de referência (os da fase 6 serão comparados com eles):
 
 - **`lssit.f90`:** o tipo ganha `usegpu` (padrão `.true.`) e `gpu`, e `lssitend` libera a GPU. No modo GPU, o `preparehv` chama `lssit_gpu_prepare` **no lugar** da compactação na CPU. Tudo sob `#ifdef GENCAN_GPU`, e o resto do arquivo é idêntico à referência.
 - **`lssit_gpu.f90` (novo):** Hessiana da face na GPU. Quando o padrão muda, monta o CSR com o espelho por contagem por linha, como os dois primeiros laços do `coo2csr` do orientador, mas com colocação fora do lugar, e grava `pos1/pos2`. A cada passo: envio dos `hne` valores + scatter. Faz também o SpMV.
-- **Caminho da fase 5:** `hess_csr`, `cgm_gpu` e `gencan_gpu` continuam em uso pelo `cutestma_gpu` até os passos 4–5.
+- **`cgm.f90`:** desvio para `cgm_gpu` quando a Hessiana da face está na GPU (`#ifdef GENCAN_GPU`).
+- **`cgm_gpu.f90`:** mesma assinatura do `cgm`, sem contexto próprio.
+- **`gencan.f90`, `cutestma.f90`, `toyprob.f90`:** iguais à referência. O executável GPU sai do mesmo fonte, linkado contra a biblioteca `gencan_gpu`.
+- **Fora do build, aguardando confirmação para remover:** `gencan_gpu.f90`, `cutestma_gpu.f90`, `cutest_iface.f90`, `gencan_gpu_context.f90`. O `hess_csr.f90` fica só para a comparação de tempos.
 - **Build:**
   - a GPU é opcional (`GENCAN_GPU` AUTO/ON/OFF), assim como o CUTEst;
   - preset `cpu` para compilar sem HIP;
@@ -152,3 +155,29 @@ Resultados de referência (os da fase 6 serão comparados com eles):
   | fase 5 | 1,05 | 14,3 |
 
   - Os ~0,6 ms a mais por passo são a leitura da estrutura do COO na comparação: cerca de 19 MB, limitada pela banda de memória. O laço com saída antecipada não mudou isso.
+
+### 2026-11-22 — `cgm` desvia para `cgm_gpu`; Gencan GPU a partir dos fontes originais (fase 6, passo 4, cobrindo boa parte do 5)
+- **Arquivo/rotina:** `sources/cgm.f90` (`cgm`), `sources/cgm_gpu.f90`, `sources/lssit_gpu.f90`, `tests/test_cgm_gpu.f90`, `CMakeLists.txt`.
+- **O que mudou (em relação a `gencan-cg-standalone/`):**
+  - `cgm.f90`, sob `#ifdef GENCAN_GPU`: `use cgm_gpu_mod` e, no início do `cgm`, `if (lssit%gpu%active) then; call cgm_gpu(<mesmos argumentos>); return; end if`. O resto do `cgm` é o original.
+  - `cgm_gpu.f90`:
+    - perdeu o `ctx` (`cgm_gpu_ctx`, `cgm_gpu_init`, `cgm_gpu_free`), e a assinatura agora é **idêntica à do `cgm`**;
+    - os vetores de device vêm de `lssit%gpu`; `p` e `hp` são a entrada e a saída do SpMV (`d_x`/`d_y`);
+    - os vetores de host compactados pela face viraram locais, como os vetores automáticos do `cgm` original;
+    - a lógica do CG não mudou.
+  - `lssit_gpu.f90`:
+    - guarda também os vetores de trabalho do CG, alocados uma vez na primeira chamada. Isso é necessário porque o `cgm` recebe o `lssit` como `intent(in)`: o CG não altera os ponteiros, só a memória do device;
+    - ganhou contadores (chamadas de `preparehv`, padrões novos, tempo total), impressos ao liberar a GPU.
+  - **`gencan.f90` não mudou.** O `lssitini` liga a GPU por padrão no build GPU, o `preparehv` manda a Hessiana para a GPU e o `cgm` desvia. O `cutestma_gpu` e o novo `toyprob_gpu` passam a ser compilados dos **mesmos** `cutestma.f90`/`toyprob.f90`, linkados contra a biblioteca `gencan_gpu`. Ela é o novo nome da `gencan_gpu6`, com os módulos em `mod/gencan_gpu`.
+  - **Fora do build** (os arquivos ainda existem; a remoção depende de confirmação, no passo 6): `gencan_gpu.f90`, `cutestma_gpu.f90` e as bibliotecas `gpucore` e `gencan_gpu` antiga. O `hess_csr.f90` continua no build só para a comparação de tempos do `test_hess_csr`.
+- **Por quê:** passo 4 do `docs/FASE6.md`. A estrutura fica por analogia: `preparehv` prepara a Hessiana da face (agora na GPU), e o `cgm` resolve o sistema (agora delegando ao `cgm_gpu`).
+- **Validação (22/11/2026, RX 9070 XT):**
+  - `test_cgm_gpu`: 9/9. Os dois lados chamam o mesmo `cgm`, um com `usegpu = .false.` e outro com a GPU. Mesmos `iter` e `cginfo`, `d` com erro ≤ 1e-15.
+  - `test_hess_csr`: 6/6.
+  - `compare-cpu-ref.sh`: 0 diferenças.
+  - `HIP_PLATFORM=nvidia` em AUTO, sem CUDA: compila só a CPU.
+  - **CUTEst, `pequena.txt` com `precond = .true.`:** CPU e GPU têm **todos os campos idênticos aos da fase 5** (`resultados/table_*_fase5_pre.txt`), exceto o tempo, em `f`, `gpsupn`, `iter`, `fcnt`, `gcnt` e `hcnt`. O BQPGAUSS inclusive, porque a ordem do CSR agora é a da fase 5. Os tempos são equivalentes. Tabelas em `resultados/table_{cpu,gpu}_fase6_pre.txt`.
+- **Primeira amostra da medição (c)** (padrões novos / chamadas de `preparehv`):
+  - sem caixa: 1/23 (ROSENBR), 1/10 (BDQRTIC), 1/14 (CRAGGLVY), 1/12 (EDENSCH);
+  - com caixa: 109/111 (BQPGAUSS), 23/23 (TORSION1), 21/21 (OBSTCLAE).
+  - Nos problemas com caixa, a face muda em praticamente todo passo de Newton. Ali o custo de montar o padrão é pago a cada passo, o que reforça a opção (b).

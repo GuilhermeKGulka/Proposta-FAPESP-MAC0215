@@ -63,7 +63,22 @@ module lssit_gpu_mod
     type(c_ptr) :: d_hcoo = c_null_ptr, d_pos1 = c_null_ptr, d_pos2 = c_null_ptr
     type(c_ptr) :: d_x = c_null_ptr, d_y = c_null_ptr
     type(c_ptr) :: mat = c_null_ptr, vx = c_null_ptr, vy = c_null_ptr, d_buf = c_null_ptr
+
+    ! device: vetores de trabalho do CG (cgm_gpu.f90), capacidade n; p = d_x, hp = d_y.
+    ! Alocados aqui, uma vez, porque o cgm recebe o lssit como intent(in).
+    type(c_ptr) :: d_g = c_null_ptr, d_d = c_null_ptr, d_r = c_null_ptr
+    type(c_ptr) :: d_xf = c_null_ptr, d_lbf = c_null_ptr, d_ubf = c_null_ptr
+    type(c_ptr) :: d_lindf = c_null_ptr, d_uindf = c_null_ptr
+    type(c_ptr) :: d_dg = c_null_ptr, d_s = c_null_ptr, d_u = c_null_ptr
+    type(c_ptr) :: d_part = c_null_ptr, d_cnt = c_null_ptr, d_red = c_null_ptr
+
+    ! contadores (medicao): chamadas de prepare, padroes novos, tempo total de prepare
+    integer :: nprep = 0, nnew = 0
+    real(8) :: t_prep_tot_ms = 0.0d0
   end type lssit_gpu_type
+
+  ! blocos maximos das reducoes do CG (tem que bater com cgm_kernels.cpp)
+  integer, parameter, public :: cg_maxb = 1024
 
 contains
 
@@ -87,7 +102,25 @@ contains
     call hipCheck(hipMalloc(gpu%d_x, n * 8_c_size_t))
     call hipCheck(hipMalloc(gpu%d_y, n * 8_c_size_t))
     call hipsparseCheck(hipsparseCreate(gpu%handle))
+    ! CG
+    call hipCheck(hipMalloc(gpu%d_g,  n * 8_c_size_t))
+    call hipCheck(hipMalloc(gpu%d_d,  n * 8_c_size_t))
+    call hipCheck(hipMalloc(gpu%d_r,  n * 8_c_size_t))
+    call hipCheck(hipMalloc(gpu%d_xf,  n * 8_c_size_t))
+    call hipCheck(hipMalloc(gpu%d_lbf, n * 8_c_size_t))
+    call hipCheck(hipMalloc(gpu%d_ubf, n * 8_c_size_t))
+    call hipCheck(hipMalloc(gpu%d_lindf, n * 4_c_size_t))
+    call hipCheck(hipMalloc(gpu%d_uindf, n * 4_c_size_t))
+    call hipCheck(hipMalloc(gpu%d_dg, n * 8_c_size_t))
+    call hipCheck(hipMalloc(gpu%d_s,  n * 8_c_size_t))
+    call hipCheck(hipMalloc(gpu%d_u,  n * 8_c_size_t))
+    call hipCheck(hipMalloc(gpu%d_part, cg_maxb * 7 * 8_c_size_t))
+    call hipCheck(hipMalloc(gpu%d_cnt, 4_c_size_t))
+    call hipCheck(hipMemset(gpu%d_cnt, 0, 4_c_size_t))
+    call hipCheck(hipMalloc(gpu%d_red, 16 * 8_c_size_t))
+    call hipCheck(hipMemset(gpu%d_red, 0, 16 * 8_c_size_t))
     gpu%has_pattern = .false.
+    gpu%nprep = 0;  gpu%nnew = 0;  gpu%t_prep_tot_ms = 0.0d0
     gpu%initialized = .true.
   end subroutine lssit_gpu_init
 
@@ -104,8 +137,10 @@ contains
 
     logical :: same
     integer :: e
+    integer(8) :: t0, t1, rate
 
     if (.not. gpu%initialized) call lssit_gpu_init(gpu, n, hnnzmax)
+    call system_clock(t0, rate)
 
     ! mesmo padrao? (estrutura do COO e face; vale para qualquer evalh, nao so CUTEst)
     same = gpu%has_pattern .and. hne == gpu%hne
@@ -139,6 +174,12 @@ contains
 
     if (.not. same .and. .not. gpu%empty) call setup_spmv(gpu)
     gpu%active = .true.
+
+    ! contadores (o scatter e assincrono: o tempo nao espera o kernel terminar)
+    call system_clock(t1)
+    gpu%nprep = gpu%nprep + 1
+    if (.not. same) gpu%nnew = gpu%nnew + 1
+    gpu%t_prep_tot_ms = gpu%t_prep_tot_ms + real(t1 - t0, 8) / real(rate, 8) * 1d3
   end subroutine lssit_gpu_prepare
 
   ! *****************************************************************
@@ -226,6 +267,8 @@ contains
   subroutine lssit_gpu_free(gpu)
     type(lssit_gpu_type), intent(inout) :: gpu
     if (.not. gpu%initialized) return
+    write(*,'(A,I0,A,I0,A,F12.3)') ' (GPU) preparehv: chamadas = ', gpu%nprep, &
+         ', padroes novos = ', gpu%nnew, ', tempo total (ms) = ', gpu%t_prep_tot_ms
     call teardown_spmv(gpu)
     call hipCheck(hipFree(gpu%d_row_ptr))
     call hipCheck(hipFree(gpu%d_col))
@@ -236,6 +279,11 @@ contains
     call hipCheck(hipFree(gpu%d_x))
     call hipCheck(hipFree(gpu%d_y))
     call hipsparseCheck(hipsparseDestroy(gpu%handle))
+    call hipCheck(hipFree(gpu%d_g));  call hipCheck(hipFree(gpu%d_d));  call hipCheck(hipFree(gpu%d_r))
+    call hipCheck(hipFree(gpu%d_xf)); call hipCheck(hipFree(gpu%d_lbf)); call hipCheck(hipFree(gpu%d_ubf))
+    call hipCheck(hipFree(gpu%d_lindf)); call hipCheck(hipFree(gpu%d_uindf))
+    call hipCheck(hipFree(gpu%d_dg)); call hipCheck(hipFree(gpu%d_s)); call hipCheck(hipFree(gpu%d_u))
+    call hipCheck(hipFree(gpu%d_part)); call hipCheck(hipFree(gpu%d_cnt)); call hipCheck(hipFree(gpu%d_red))
     deallocate(gpu%srow, gpu%scol, gpu%sfrvar, gpu%renum, gpu%alen, gpu%col, &
                gpu%row_ptr, gpu%pos1, gpu%pos2)
     gpu%initialized = .false.;  gpu%active = .false.;  gpu%has_pattern = .false.

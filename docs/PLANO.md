@@ -230,13 +230,28 @@ Controle: rodei o `cgm` da **CPU** com os produtos internos somados em ordem rev
 
 **Tempos**: a GPU é mais lenta nesses n pequenos. Parte (~0.12 s fixos) é custo de `cgm_gpu_init` (handles do hipSPARSE, alocações) dentro da região medida. O `cutestma` mede com `cpu_time`, que não é tempo de parede com GPU.
 
+**Fase 6, até o passo 4 (22/11/2026)** — histórico completo no `docs/CHANGELOG_GPU.md`:
+- **Testes:**
+  - `test_hess_csr`: 6/6. É o `preparehv` com GPU contra o `preparehv` + `computehv` da CPU, mais a medição D4.
+  - `test_cgm_gpu`: 9/9. É o mesmo `cgm` com `usegpu = .false.` e com a GPU.
+  - Os testes não precisam mais de `invalidate`: o `lssit_gpu` detecta sozinho a mudança de estrutura.
+- **Build `cpu`:** `compare-cpu-ref.sh` dá 0 diferenças contra a referência.
+- **CUTEst `pequena.txt`, `precond = .true.`:** CPU e GPU com **todos os campos idênticos aos da fase 5**, fora o tempo, inclusive o BQPGAUSS (118). Tabelas em `resultados/table_{cpu,gpu}_fase6_pre.txt`.
+- **Padrões novos por chamada de `preparehv`:** 1 nos problemas sem caixa. Nos com caixa, quase todo passo: BQPGAUSS 109/111, TORSION1 23/23, OBSTCLAE 21/21.
+
 ---
 
 ## 7. Pendências e próximos passos (ordem sugerida)
 
 ### 7.1 Imediato (validação das fases 4–5)
 
-Situação em 21/11/2026: **todos os itens do §7.1 estão feitos**, e a fase 5 está validada (§6). Em 22/11/2026 o plano da fase 6 foi aprovado (§7.5, `docs/FASE6.md`).
+Situação em 21/11/2026: **todos os itens do §7.1 estão feitos**, e a fase 5 está validada (§6). Em 22/11/2026 o plano da fase 6 foi aprovado (§7.5, `docs/FASE6.md`), e os passos 1–4 foram feitos no mesmo dia, no branch `fase6`.
+
+Próximos passos da fase 6:
+- passo 5: remover `gencan_gpu.f90`/`cutestma_gpu.f90`, que dependem de confirmação;
+- (c): medir em problemas CUTEst grandes, com uma lista filtrada por `n` mínimo. **Avisar antes, porque é experimento longo**;
+- passo 6: limpeza;
+- passo 7: validação final, incluindo NVIDIA e a variante `precond = .false.`.
 
 1. **[FEITO]** **Igualar `precond`** nos dois `cutestma` e rodar duas rodadas: `false/false` e `true/true` (`grep -n "precond *=" sources/cutestma*.f90`). Conferir `gcnt` iguais e `BQPGAUSS`. Se ainda divergir com `precond` igual: rodar com `iprint = 3` dos dois lados e comparar a trajetória.
 2. **[FEITO, com 9 cenários]** **Completar `tests/test_cgm_gpu.f90` com 8 cenários**: 7 = SPD com precond, 8 = SPD com bounds e precond. Para cada cenário com precond: sortear `s`, calcular `y = H s` (H simétrica a partir do COO), `sty`, `sts`, chamar `comphpre(n, s, y, sty, sts, 1d-16, 1d16, .true., inform, ls)` antes do `cgm`/`cgm_gpu`; passar `prec(s)` no lugar de `.false.` e `ls` no final da chamada `cgm_gpu`. `nscen = 8`, novo array `prec`.

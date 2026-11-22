@@ -164,9 +164,10 @@ Questões em aberto:
    - Ramo GPU do `preparehv` com o espelhamento + `coo2csr` + envio.
    - SpMV, migrando o que hoje está em `hess_csr.f90`.
    - Validação: o `test_hess_csr` passa a testar `preparehv` com `usegpu` contra `computehv` da CPU, incluindo o caso "mesmo padrão, valores novos".
-4. **`cgm` + `cgm_gpu`.** O desvio no `cgm`, e o `cgm_gpu` lendo `lssit%gpu` em vez do `ctx`.
+3. **[FEITO 22/11: versão (iv) + opção (b) de D4]**
+4. **[FEITO 22/11, junto com a maior parte do passo 5: o `gencan.f90` não precisou mudar, e o `cutestma_gpu` já sai do `cutestma.f90`. A CUTEst `pequena.txt` deu resultado idêntico ao da fase 5]** **`cgm` + `cgm_gpu`.** O desvio no `cgm`, e o `cgm_gpu` lendo `lssit%gpu` em vez do `ctx`.
    - Validação: `test_cgm_gpu`, 9/9 cenários.
-5. **`gencan` + `cutestma`.**
+5. **[QUASE TODO FEITO no passo 4; falta remover os arquivos antigos, o que depende de confirmação, e medir (c) em problemas grandes]** **`gencan` + `cutestma`.**
    - `gencan.f90` sem `ctx`, com a GPU decidida pela macro (D2(b)).
    - Remover `gencan_gpu.f90` e `cutestma_gpu.f90`.
    - Conferir que o `run-cutest-gpu.sh` continua funcionando com os dois executáveis vindos do mesmo fonte.

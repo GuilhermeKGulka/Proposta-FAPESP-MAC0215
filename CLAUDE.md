@@ -73,17 +73,30 @@ cmake --preset cpu && cmake --build --preset cpu && ./build/cpu/toyprob_cpu
 
 ## Arquitetura (resumo; detalhes no PLANO §4)
 
-O fluxo é o do Gencan original: `genunc`/`gencan` (gencan.f90) escolhe a face livre → `cgm` (cgm.f90) resolve `H d = -g` nas variáveis livres → `computehv`/`applyhpre` (lssit.f90). A versão GPU troca só o CG:
+O fluxo é o do Gencan original: `genunc`/`gencan` (gencan.f90) escolhe a face livre → `evalh` → `comphpre` → `preparehv` (lssit.f90) prepara a Hessiana da face → `cgm` (cgm.f90) resolve `H d = -g` nas variáveis livres, usando `computehv`/`applyhpre`.
 
-- `gencan_gpu.f90` é uma cópia do `gencan.f90` com mudanças mínimas (PLANO §4.4). No lugar de `preparehv` + `cgm`, chama `hess_csr_update` + `cgm_gpu`. O contexto GPU é local a `genunc`/`gencan`.
-- `hess_csr.f90` monta, na GPU, o CSR `nfr×nfr` a partir do COO do `evalh` e do `frvar`, com a mesma renumeração de `preparehv` (que não é chamado). O padrão, o descritor e o buffer só são refeitos quando a face muda. Fora isso, apenas os valores são espalhados por kernel.
-- `cgm_gpu.f90` tem a mesma interface e a mesma ordem de testes que `cgm`. Os vetores ficam no device e as reduções são kernels próprios em `cgm_kernels.cpp`. Na fase 5 há uma sincronização por iteração, com o trabalho da iteração seguinte lançado de forma especulativa. `comphpre` continua na CPU.
-- CMake: `gencan_cpu` (referência intocada) ← `gpucore` (hess_csr + cgm_gpu) ← `gencan_gpu`. `kernels` é o objeto gerado pelo hipcc. `cutestma.f90` e `cutestma_gpu.f90` são os drivers CUTEst e precisam permanecer equivalentes, inclusive no valor de `precond`.
+Fase 6 (branch `fase6`): um só código. A GPU entra por analogia, em três pontos sob `#ifdef GENCAN_GPU`:
+- **`lssit.f90`:** o `lssit_type` ganha `usegpu` (padrão `.true.` no build GPU) e `gpu` (`lssit_gpu.f90`). No modo GPU (`usegpu`, `truehp`, `compressed`), o `preparehv` chama `lssit_gpu_prepare` **no lugar** da compactação da CPU.
+- **`lssit_gpu.f90`:** é a Hessiana da face na GPU.
+  - Ele parte do COO do `evalh` e só remonta o padrão quando a estrutura do COO ou a face mudam: CSR com espelho, por contagem por linha, e `pos1/pos2`.
+  - A cada passo, envia os `hne` valores e os espalha por kernel.
+  - Guarda também os vetores de trabalho do CG.
+  - Toda a memória da GPU é alocada uma vez.
+- **`cgm.f90`:** se `lssit%gpu%active`, chama `cgm_gpu` (mesma assinatura) e retorna.
+- **`cgm_gpu.f90`:** CG com a mesma ordem de testes do `cgm`, uma sincronização por iteração e trabalho especulativo. As reduções são kernels próprios (`cgm_kernels.cpp`), e o `comphpre` continua na CPU.
+- **`gencan.f90`, `cutestma.f90` e `toyprob.f90` são iguais à referência.**
+- **CMake:**
+  - `gencan_cpu` = os fontes sem a macro;
+  - `gencan_gpu` = os mesmos fontes com `-DGENCAN_GPU`, mais `lssit_gpu`/`cgm_gpu`;
+  - `cutestma_{cpu,gpu}` e `toyprob_{cpu,gpu}` saem do mesmo fonte;
+  - os testes comparam `usegpu = .false.` contra a GPU no mesmo executável.
+- **Fora do build, aguardando remoção:** `gencan_gpu.f90`, `cutestma_gpu.f90`, `cutest_iface.f90`, `gencan_gpu_context.f90`. O `hess_csr.f90` só serve à comparação de tempos do `test_hess_csr`.
 
 Armadilhas que já custaram tempo:
 - Fortran não diferencia maiúsculas de minúsculas (`d_d` ≠ `d_dg`, nunca `d_D`).
 - Os `add_executable(cutestma_*)` precisam vir depois do bloco do sifdecoder no CMake.
-- Testes sintéticos precisam de `hess_csr_invalidate` antes de cada `hess_csr_update`.
+- Procedimento interno (depois do `contains` de um programa) não pode ter o próprio `contains`. Funções auxiliares de teste vão para o nível do programa.
+- No build GPU, o `cgm` recebe o `lssit` como `intent(in)`. Qualquer estado de GPU que o CG precise já tem que estar alocado em `lssit%gpu` antes dele.
 - A lista completa está no PLANO §3 e §8.
 
 ## Regras de trabalho
