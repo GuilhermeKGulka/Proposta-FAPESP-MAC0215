@@ -118,7 +118,13 @@ Questões em aberto:
     - (b) usar a contagem fora do lugar, que é a mesma ideia do `coo2csr` (contar por linha e acumular) sem o passo in-place;
     - (c) medir no Gencan real quantas trocas de face acontecem antes de decidir.
   - O peso disso depende de quantas vezes a face muda: nunca em `genunc`, e com frequência nas primeiras iterações de problemas com caixa.
-- **[ABERTO] Comparação da estrutura do COO a cada passo (0,65 ms).** Ela garante a correção para qualquer `evalh`. A fase 5 assumia, como no CUTEst, que a estrutura é fixa e só comparava `hne` e a face. Dá para manter a comparação completa, como está, ou adotar a hipótese da fase 5 e documentá-la.
+- **[ABERTO: conversar com o orientador] Comparação da estrutura do COO a cada passo (~0,6 ms em `nnz = 1,4 M`).** Ela garante a correção para qualquer `evalh`. A fase 5 assumia, como no CUTEst, que a estrutura é fixa e só comparava `hne` e a face.
+  - **A face não é o problema.** O Gencan sabe quando a face muda (`newface` no `gencanb`), e comparar `frvar` custa O(n), pouco. O custo está em verificar se a **estrutura** (`hrow/hcol`) que o `evalh` devolve mudou. Só quem escreveu o `evalh` sabe disso, e a interface atual não tem como informar.
+  - **Opções:**
+    - (1) manter a comparação completa, como está agora;
+    - (2) supor estrutura fixa, como na fase 5, e documentar;
+    - (3) um aviso "estrutura da Hessiana fixa", passado pelo usuário. Ele precisaria entrar como argumento de `genunc`/`gencan` (como `truehp`) ou do `evalh`, o que **muda a assinatura**. Por isso fica junto com o D2(a).
+  - Decisão provisória: (1). A medição (c) vai mostrar quanto esse custo pesa no passo de Newton em problemas grandes.
 
 ### 4.1 Opções discutidas (proposta de 21/11/2026)
 

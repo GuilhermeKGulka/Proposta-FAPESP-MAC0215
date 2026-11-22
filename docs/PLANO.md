@@ -305,6 +305,13 @@ O pedido:
 - D5: código em `gencan-cg-standalone-gpu/`.
 - D6: branch `fase6`.
 
+**Para conversar com o orientador [ABERTO]:**
+1. **Mudar a assinatura de `genunc`/`gencan`.**
+   - Para escolher CPU/GPU em tempo de execução: argumento `usegpu`, que é o D2(a).
+   - Para o usuário avisar que a estrutura da Hessiana devolvida pelo `evalh` é fixa: evitaria comparar `hrow/hcol` a cada passo, ~0,6 ms em `nnz = 1,4 M` (`docs/FASE6.md` §4.0).
+   - As duas mudanças são do mesmo tipo e podem ser decididas juntas.
+2. **Conversão COO → CSR.** Usamos contagem por linha com colocação fora do lugar, que mantém os dois primeiros laços do `coo2csr` dele. A permutação in-place por ciclos ficou cerca de 3× mais lenta na troca de face (46 contra 16 ms), e nos problemas com caixa a face muda em quase todo passo. A versão com o `coo2csr` está no branch `fase6-coo2csr`.
+
 Perguntas originais (respondidas no plano acima):
 - Como escolher CPU ou GPU: opção do CMake (por exemplo `-DUSE_GPU=ON`, ligada só se o HIP for encontrado) com pré-processador (`#ifdef` em `.F90`), ou módulos separados escolhidos na hora de linkar. E se a escolha também existe em tempo de execução (um parâmetro como `truehp`/`precond`).
 - Onde fica o código único: `gencan-cg-standalone/` continua sendo a referência intocada que serve de linha de base. O código unificado provavelmente nasce em `gencan-cg-standalone-gpu/`.
