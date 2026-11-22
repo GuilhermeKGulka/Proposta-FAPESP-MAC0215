@@ -19,7 +19,10 @@ Iniciação científica FAPESP (IME-USP, orientador Ernesto G. Birgin). Implemen
    - COO → CSR adaptado de `docs/coo2csr_orientador.f90`;
    - cada mudança em relação ao Gencan de referência registrada em `docs/CHANGELOG_GPU.md`.
 
-O plano da fase 6 está em `docs/FASE6.md`, aprovado em 22/11/2026: decisões no §4.0 e passos 1–7 no §5. O trabalho é feito no branch `fase6`. A escolha CPU/GPU é provisoriamente só de compilação (D2(b)), porque o argumento `usegpu` depende do orientador aprovar a mudança de assinatura. A rota do `coo2csr` (D4) precisa ser medida contra o scatter da fase 5.
+**[FEITO 22/11/2026]** A fase 6 foi validada em AMD e NVIDIA e mergeada no `main`. O plano está em `docs/FASE6.md` e as mudanças em relação à referência em `docs/CHANGELOG_GPU.md`.
+- A escolha CPU/GPU é provisoriamente só de compilação (D2(b)).
+- Esperam a conversa com o orientador (PLANO §7.5): o argumento `usegpu`, o aviso de estrutura fixa e a troca do `coo2csr` in-place por contagem. A versão com o `coo2csr` está no branch `fase6-coo2csr`.
+- Próxima etapa provável: a medição justa (PLANO §7.2) e as decisões do §7.3. **Pergunte ao usuário antes de começar.**
 
 Leia antes de começar:
 - `docs/PLANO.md`: estado atual, decisões, testes, pendências, armadilhas e cronograma. É a fonte da verdade do andamento.
@@ -76,7 +79,7 @@ cmake --preset cpu && cmake --build --preset cpu && ./build/cpu/toyprob_cpu
 
 O fluxo é o do Gencan original: `genunc`/`gencan` (gencan.f90) escolhe a face livre → `evalh` → `comphpre` → `preparehv` (lssit.f90) prepara a Hessiana da face → `cgm` (cgm.f90) resolve `H d = -g` nas variáveis livres, usando `computehv`/`applyhpre`.
 
-Fase 6 (branch `fase6`): um só código. A GPU entra por analogia, em três pontos sob `#ifdef GENCAN_GPU`:
+Fase 6 (no `main` desde 22/11/2026): um só código. A GPU entra por analogia, em três pontos sob `#ifdef GENCAN_GPU`:
 - **`lssit.f90`:** o `lssit_type` ganha `usegpu` (padrão `.true.` no build GPU) e `gpu` (`lssit_gpu.f90`). No modo GPU (`usegpu`, `truehp`, `compressed`), o `preparehv` chama `lssit_gpu_prepare` **no lugar** da compactação da CPU.
 - **`lssit_gpu.f90`:** é a Hessiana da face na GPU.
   - Ele parte do COO do `evalh` e só remonta o padrão quando a estrutura do COO ou a face mudam: CSR com espelho, por contagem por linha, e `pos1/pos2`.
