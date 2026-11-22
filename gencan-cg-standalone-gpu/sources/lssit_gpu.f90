@@ -267,8 +267,9 @@ contains
   subroutine lssit_gpu_free(gpu)
     type(lssit_gpu_type), intent(inout) :: gpu
     if (.not. gpu%initialized) return
-    write(*,'(A,I0,A,I0,A,F12.3)') ' (GPU) preparehv: chamadas = ', gpu%nprep, &
-         ', padroes novos = ', gpu%nnew, ', tempo total (ms) = ', gpu%t_prep_tot_ms
+    write(*,'(A,I0,A,I0,A,F12.3,A,I0,A,I0,A,I0)') ' (GPU) preparehv: chamadas = ', gpu%nprep, &
+         ', padroes novos = ', gpu%nnew, ', tempo total (ms) = ', gpu%t_prep_tot_ms, &
+         ', ultimo padrao: hne = ', gpu%hne, ', nfr = ', gpu%nfr, ', nnz = ', gpu%nnz
     call teardown_spmv(gpu)
     call hipCheck(hipFree(gpu%d_row_ptr))
     call hipCheck(hipFree(gpu%d_col))

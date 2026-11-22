@@ -239,6 +239,45 @@ Controle: rodei o `cgm` da **CPU** com os produtos internos somados em ordem rev
 - **CUTEst `pequena.txt`, `precond = .true.`:** CPU e GPU com **todos os campos idênticos aos da fase 5**, fora o tempo, inclusive o BQPGAUSS (118). Tabelas em `resultados/table_{cpu,gpu}_fase6_pre.txt`.
 - **Padrões novos por chamada de `preparehv`:** 1 nos problemas sem caixa. Nos com caixa, quase todo passo: BQPGAUSS 109/111, TORSION1 23/23, OBSTCLAE 21/21.
 
+**Fase 6, medição (c): 18 problemas com caixa e `n ≥ 10000` (`grandes_bound.txt`, 22/11/2026).**
+- Configuração: `precond = .true.`, limite de 600 s de CPU por execução. Os tempos são o `cpu_time` do `cutestma`.
+- Tabelas em `resultados/table_{cpu,gpu}_fase6_grandes_bound.txt`.
+
+| Problema | n | CPU (s) | GPU (s) | iter CPU/GPU | padrões novos / `preparehv` | `preparehv` GPU, total (ms) |
+|---|---|---|---|---|---|---|
+| CVXBQP1 | 100000 | 0,04 | 0,16 | 1/1 | 1/1 | 8 |
+| CYCLOOCTLS | 30000 | 5,99 | **2,55** | 143/156 (a) | 1/156 | 114 |
+| DEGDIAG | 100001 | 0,02 | 0,13 | 1/1 | 1/1 | 5 |
+| DEGTRID | 100001 | 1,10 | **0,26** | 3/3 | 1/3 | 8 |
+| DEGTRID2 | 100001 | 0,03 | 0,14 | 1/1 | 1/1 | 6 |
+| JNLBRNG2 | 10000 | 0,28 | 0,33 | 24/24 | 12/13 | 10 |
+| JNLBRNGA | 10000 | 0,14 | 0,27 | 36/36 | 18/18 | 15 |
+| JNLBRNGB | 10000 | 0,39 | 0,37 | 22/22 | 7/15 | 10 |
+| NCVXBQP1 | 50000 | 0,02 | 0,13 | 1/1 | 1/1 | 6 |
+| NCVXBQP2 | 10000 | 0,03 | 0,15 | 26/26 | 17/22 | 11 |
+| NCVXBQP3 | 10000 | 0,02 | 0,15 | 17/17 | 11/14 | 8 |
+| OBSTCLAE | 10000 | 0,15 | 0,28 | 38/38 | 21/21 | 17 |
+| OBSTCLAL | 10000 | 0,14 | 0,29 | 41/41 | 21/21 | 18 |
+| OBSTCLBL | 10000 | 0,17 | 0,29 | 57/57 | 43/43 | 30 |
+| OBSTCLBM | 10000 | 0,07 | 0,19 | 21/21 | 15/16 | 14 |
+| OBSTCLBU | 10000 | 0,13 | 0,26 | 44/44 | 28/28 | 23 |
+| ODNAMUR | 11130 | 448,9 | **87,7** (5,1×) | 283/257 (b) | 243/245 | **11904** (14% do tempo GPU) |
+| WALL50 | 37311 | 486,5 | **61,8** (7,9×) | 544/566 (c) | 490/563 | 1381 (2%) |
+
+- (a) **CYCLOOCTLS, arredondamento:** a CPU com os produtos internos do `cgm` somados em ordem reversa faz **164** iterações (contra 143 na ordem normal). As três versões convergem (`gpsupn ≤ eps`). Não é bug.
+- (b) **ODNAMUR:**
+  - O controle com as somas em ordem reversa faz **285** iterações, contra 283 na ordem normal. Os três convergem (`istop = 0`), com `f` igual a ~1e-14.
+  - A trajetória é sensível à ordem das somas, então a diferença é compatível com arredondamento. Mas a perturbação do controle é menor que a da GPU (257), então não é uma prova.
+- (c) WALL50: os dois modos param por falta de progresso (`istop = 8`), então as iterações não são comparáveis.
+- **Fora (a)–(c):** `iter`/`fcnt`/`gcnt`/`hcnt` idênticos, e `f` igual em até 1e-14.
+- **Leitura:**
+  - Com o `n` padrão do SIF, a maioria desses problemas converge em poucos passos, e a GPU perde pelo custo fixo (~0,12 s, a medir em tempo de parede, §7.2).
+  - Onde há trabalho de verdade (ODNAMUR, WALL50, CYCLOOCTLS, DEGTRID), a GPU ganha de 2× a 8×.
+  - **A montagem do padrão pesa no ODNAMUR:** 49 ms por `preparehv`, com a face mudando em 243 de 245 passos, o que dá 14% do tempo GPU.
+    - O COO tem `hne = 9,4 M` entradas, e a face usa só `nfr = 5512` das 11130 variáveis (`nnz` da face = 3,9 M).
+    - A cada passo sobem os 9,4 M valores (~75 MB), a estrutura é comparada (mais ~75 MB lidos) e o padrão é remontado em três passadas pelo COO.
+    - Candidatos a otimização (§7.3): enviar só os valores das entradas mantidas pela face, ou montar o padrão na GPU. Isso depende de perfil.
+
 ---
 
 ## 7. Pendências e próximos passos (ordem sugerida)
@@ -268,6 +307,10 @@ Próximos passos da fase 6:
 
 ### 7.3 Otimizações futuras (só depois de medir)
 
+- **Montagem da Hessiana da face quando o COO é grande e a face é pequena** (caso ODNAMUR, §6: 49 ms por passo, 14% do tempo GPU). Opções:
+  - enviar só os valores das entradas mantidas pela face, juntando-os no host a partir de uma lista de índices guardada na montagem;
+  - montar o padrão na GPU;
+  - a comparação da estrutura sem o aviso de estrutura fixa (§7.5) também entra nessa conta.
 - Manter `x/lbnd/ubnd/lind/uind` compactados na GPU entre chamadas quando a face não muda.
 - Reduzir cópias H2D por iteração de Newton (hoje: COO `hne` doubles + compactações + `g`).
 - Fundir kernels (`update_p` + `dots`), ou usar HIP Graphs para as 4 chamadas por iteração.

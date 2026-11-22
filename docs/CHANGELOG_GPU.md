@@ -181,3 +181,14 @@ Resultados de referência (os da fase 6 serão comparados com eles):
   - sem caixa: 1/23 (ROSENBR), 1/10 (BDQRTIC), 1/14 (CRAGGLVY), 1/12 (EDENSCH);
   - com caixa: 109/111 (BQPGAUSS), 23/23 (TORSION1), 21/21 (OBSTCLAE).
   - Nos problemas com caixa, a face muda em praticamente todo passo de Newton. Ali o custo de montar o padrão é pago a cada passo, o que reforça a opção (b).
+
+### 2026-11-22 — resumo do `preparehv` mostra o tamanho do padrão; medição (c)
+- **Arquivo/rotina:** `sources/lssit_gpu.f90` (`lssit_gpu_free`).
+- **O que mudou:** a linha `(GPU) preparehv: ...`, impressa ao liberar a GPU, agora mostra também `hne`, `nfr` e `nnz` do último padrão. Só aparece no build GPU.
+- **Por quê:** interpretar o custo do `preparehv` nos benchmarks.
+- **Validação:** `run-tests.sh` 6/6 e 9/9.
+- **Medição (c)** (`grandes_bound.txt`, 18 problemas com caixa e `n ≥ 10000`; tabela no PLANO §6):
+  - A GPU ganha de 2× a 8× onde há trabalho: ODNAMUR 449 → 88 s, WALL50 487 → 62 s, CYCLOOCTLS 6,0 → 2,6 s e DEGTRID 1,1 → 0,26 s.
+  - Nos problemas que convergem em poucos passos, a GPU perde pelo custo fixo.
+  - Divergências de `iter` no CYCLOOCTLS e no ODNAMUR foram atribuídas a arredondamento, com o controle de somas invertidas.
+  - No ODNAMUR (`hne = 9,4 M`, face com `nnz = 3,9 M`), o `preparehv` custa 49 ms por passo, 14% do tempo GPU.
