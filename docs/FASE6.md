@@ -110,7 +110,7 @@ A causa é estrutural: a fase 5 nunca compactava o COO na CPU. Ela guardava, uma
 | Fase 5 | 1,05 ms | 14 ms |
 
 Questões em aberto:
-- **[ABERTO] Face nova: `coo2csr` in-place × contagem fora do lugar.**
+- **[DECIDIDO 22/11: opção (b), contagem fora do lugar; a face nova caiu para 16 ms. A versão com o `coo2csr` está no branch `fase6-coo2csr`. A (c) vem no passo 4/5, com o Gencan rodando o caminho novo] Face nova: `coo2csr` in-place × contagem fora do lugar.**
   - A permutação por ciclos do `coo2csr` faz acessos aleatórios a três vetores (linha, coluna, origem) e fica cerca de 3× mais lenta que a contagem da fase 5.
   - A vantagem dele, não usar memória extra, não se aplica aqui: os vetores de trabalho já existem, porque o COO do `lssit` não é destruído.
   - Opções:

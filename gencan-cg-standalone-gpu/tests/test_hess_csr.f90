@@ -172,8 +172,8 @@ contains
       call hipCheck(hipDeviceSynchronize())
       call system_clock(c1);  t_new(k) = real(c1 - c0, 8) / real(rate, 8) * 1d3
       if (k == kface) then
-        write(*,'(A,F9.3,A,F9.3,A,F9.3,A)') '  fase 6, face nova: build_pattern ', lsg%gpu%t_build_ms, &
-              ' ms (coo2csr ', lsg%gpu%t_conv_ms, ' ms), SpMV_preprocess ', lsg%gpu%t_prep_ms, ' ms'
+        write(*,'(A,F9.3,A,F9.3,A)') '  fase 6, face nova: build_pattern ', lsg%gpu%t_build_ms, &
+              ' ms, SpMV_preprocess ', lsg%gpu%t_prep_ms, ' ms'
       end if
 
       ! referencia: preparehv so CPU (o que o Gencan original ja paga)

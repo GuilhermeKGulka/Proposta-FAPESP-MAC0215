@@ -4,12 +4,14 @@
 ! Chamado por preparehv (so com truehp e compressed), NO LUGAR da compactacao do
 ! COO feita na CPU. Parte do COO do evalh (indices 1..n, um triangulo) e de frvar:
 !   - padrao novo (estrutura do COO ou face mudou): renumera e filtra pela face
-!     (mesma regra de preparehv), espelha as entradas fora da diagonal (a API
-!     generica do cuSPARSE nao faz SpMV "simetrica, so um triangulo"; a ordem
-!     dentro da linha do CSR nao importa, entao o espelho vai junto da entrada),
-!     converte para CSR com o coo2csr do orientador carregando a origem de cada
-!     entrada, e guarda pos1/pos2 = posicao no CSR de cada entrada do COO original;
-!     envia row_ptr/col/pos1/pos2 e refaz descritor, buffer e preprocess;
+!     (mesma regra de preparehv) e monta o CSR com o espelho das entradas fora da
+!     diagonal (a API generica do cuSPARSE nao faz SpMV "simetrica, so um
+!     triangulo"). A conversao segue o coo2csr do orientador (conta por linha,
+!     acumula o inicio de cada linha), mas coloca as entradas fora do lugar, com
+!     um cursor por linha, em vez da permutacao in-place por ciclos (3x mais
+!     lenta aqui; versao com o coo2csr no branch fase6-coo2csr). A ordem dentro
+!     da linha nao importa. Guarda pos1/pos2 = posicao no CSR de cada entrada do
+!     COO original; envia row_ptr/col/pos1/pos2 e refaz descritor, buffer e preprocess;
 !   - todo passo: envia os hne valores do COO e espalha no CSR por kernel.
 ! Toda a memoria (host e device) e alocada uma vez, na primeira chamada, com a
 ! capacidade maxima (n, hnnzmax); o COO do lssit nao e alterado.
@@ -45,14 +47,13 @@ module lssit_gpu_mod
     logical :: empty = .true., spmv_ready = .false.
     real(8) :: t_prep_ms = 0.0d0       ! tempo do SpMV_preprocess no ultimo padrao novo
     real(8) :: t_build_ms = 0.0d0      ! tempo de build_pattern (host) no ultimo padrao novo
-    real(8) :: t_conv_ms = 0.0d0       ! parte de t_build_ms gasta no coo2csr
 
     ! host: estrutura do ultimo padrao (para detectar mudanca)
     integer, allocatable :: srow(:), scol(:)
     logical, allocatable :: sfrvar(:)
     ! host: montagem do padrao
-    integer, allocatable :: renum(:), alen(:)
-    integer, allocatable :: wrow(:), wcol(:), wid(:)   ! 2*hnnzmax: COO da face com espelho
+    integer, allocatable :: renum(:), alen(:)          ! alen: contagem, depois cursor por linha
+    integer, allocatable :: col(:)                     ! 2*hnnzmax (integer = int32)
     integer, allocatable :: row_ptr(:)                 ! n+1 (integer = int32)
     integer, allocatable :: pos1(:), pos2(:)           ! hnnzmax
 
@@ -75,7 +76,7 @@ contains
 
     gpu%n = n;  gpu%hnnzmax = hnnzmax
     allocate(gpu%srow(hnnzmax), gpu%scol(hnnzmax), gpu%sfrvar(n), gpu%renum(n), gpu%alen(n), &
-             gpu%wrow(2*hnnzmax), gpu%wcol(2*hnnzmax), gpu%wid(2*hnnzmax), gpu%row_ptr(n+1), &
+             gpu%col(2*hnnzmax), gpu%row_ptr(n+1), &
              gpu%pos1(hnnzmax), gpu%pos2(hnnzmax))
     call hipCheck(hipMalloc(gpu%d_row_ptr, (n+1) * 4_c_size_t))
     call hipCheck(hipMalloc(gpu%d_col, 2 * hnnzmax * 4_c_size_t))
@@ -102,13 +103,21 @@ contains
     real(kind=8), intent(in), target :: hval(hnnzmax)
 
     logical :: same
+    integer :: e
 
     if (.not. gpu%initialized) call lssit_gpu_init(gpu, n, hnnzmax)
 
     ! mesmo padrao? (estrutura do COO e face; vale para qualquer evalh, nao so CUTEst)
     same = gpu%has_pattern .and. hne == gpu%hne
     if (same) same = all(frvar(1:n) .eqv. gpu%sfrvar(1:n))
-    if (same) same = all(hrow(1:hne) == gpu%srow(1:hne)) .and. all(hcol(1:hne) == gpu%scol(1:hne))
+    if (same) then                     ! um so laco, para na primeira diferenca
+      do e = 1, hne
+        if (hrow(e) /= gpu%srow(e) .or. hcol(e) /= gpu%scol(e)) then
+          same = .false.
+          exit
+        end if
+      end do
+    end if
     gpu%changed = .not. same
 
     if (.not. same) then
@@ -116,7 +125,7 @@ contains
       call build_pattern(gpu, n, frvar, hne, hrow, hcol)
       if (.not. gpu%empty) then
         call hipCheck(hipMemcpy(gpu%d_row_ptr, c_loc(gpu%row_ptr), (gpu%nfr+1) * 4_c_size_t, hipMemcpyHostToDevice))
-        call hipCheck(hipMemcpy(gpu%d_col, c_loc(gpu%wcol), gpu%nnz * 4_c_size_t, hipMemcpyHostToDevice))
+        call hipCheck(hipMemcpy(gpu%d_col, c_loc(gpu%col), gpu%nnz * 4_c_size_t, hipMemcpyHostToDevice))
         call hipCheck(hipMemcpy(gpu%d_pos1, c_loc(gpu%pos1), hne * 4_c_size_t, hipMemcpyHostToDevice))
         call hipCheck(hipMemcpy(gpu%d_pos2, c_loc(gpu%pos2), hne * 4_c_size_t, hipMemcpyHostToDevice))
       end if
@@ -135,17 +144,16 @@ contains
   ! *****************************************************************
   ! *****************************************************************
 
-  ! Monta o CSR nfr x nfr da face: row_ptr, col (em wcol) e pos1/pos2.
+  ! Monta o CSR nfr x nfr da face: row_ptr, col e pos1/pos2.
   subroutine build_pattern(gpu, n, frvar, hne, hrow, hcol)
     type(lssit_gpu_type), intent(inout) :: gpu
     integer, intent(in) :: n, hne
     logical, intent(in) :: frvar(n)
     integer, intent(in) :: hrow(hne), hcol(hne)
-    integer :: i, j, e, r, c, k, nnz
-    integer(8) :: t0, t1, t2, t3, rate
+    integer :: i, j, e, r, c, k, nfr
+    integer(8) :: t0, t1, rate
 
     call system_clock(t0, rate)
-    t1 = t0;  t2 = t0
     ! renumeracao identica a de preparehv: i-esimo .true. de frvar -> i
     k = 0
     do i = 1, n
@@ -156,46 +164,45 @@ contains
         gpu%renum(i) = 0
       end if
     end do
-    gpu%nfr = k
+    nfr = k
+    gpu%nfr = nfr
 
-    ! COO da face com espelho; wid guarda a origem (+e direta, -e espelhada)
-    nnz = 0
-    gpu%pos1(1:hne) = 0;  gpu%pos2(1:hne) = 0
+    ! como no coo2csr: conta as entradas de cada linha (com o espelho) ...
+    gpu%alen(1:nfr) = 0
     do e = 1, hne
       r = gpu%renum(hrow(e));  c = gpu%renum(hcol(e))
       if (r == 0 .or. c == 0) cycle
-      nnz = nnz + 1
-      gpu%wrow(nnz) = r;  gpu%wcol(nnz) = c;  gpu%wid(nnz) = e
+      gpu%alen(r) = gpu%alen(r) + 1
+      if (r /= c) gpu%alen(c) = gpu%alen(c) + 1
+    end do
+
+    ! ... e acumula o inicio de cada linha
+    gpu%row_ptr(1) = 1
+    do i = 1, nfr
+      gpu%row_ptr(i+1) = gpu%row_ptr(i) + gpu%alen(i)
+    end do
+    gpu%nnz = gpu%row_ptr(nfr+1) - 1
+    gpu%empty = (nfr == 0 .or. gpu%nnz == 0)
+
+    ! colocacao fora do lugar: alen vira o cursor de cada linha; pos1/pos2 guardam
+    ! onde cada entrada do COO original (e seu espelho) caiu no CSR
+    gpu%alen(1:nfr) = gpu%row_ptr(1:nfr)
+    do e = 1, hne
+      gpu%pos1(e) = 0;  gpu%pos2(e) = 0
+      r = gpu%renum(hrow(e));  c = gpu%renum(hcol(e))
+      if (r == 0 .or. c == 0) cycle
+      j = gpu%alen(r);  gpu%col(j) = c;  gpu%pos1(e) = j;  gpu%alen(r) = j + 1
       if (r /= c) then
-        nnz = nnz + 1
-        gpu%wrow(nnz) = c;  gpu%wcol(nnz) = r;  gpu%wid(nnz) = -e
+        j = gpu%alen(c);  gpu%col(j) = r;  gpu%pos2(e) = j;  gpu%alen(c) = j + 1
       end if
     end do
-    gpu%nnz = nnz
-    gpu%empty = (gpu%nfr == 0 .or. nnz == 0)
-
-    if (.not. gpu%empty) then
-      call system_clock(t1)
-      call coo2csr(gpu%nfr, nnz, gpu%wrow, gpu%wcol, gpu%wid, gpu%alen, gpu%row_ptr)
-      call system_clock(t2)
-      gpu%row_ptr(gpu%nfr+1) = nnz + 1
-      do j = 1, nnz
-        e = gpu%wid(j)
-        if (e > 0) then
-          gpu%pos1(e) = j
-        else
-          gpu%pos2(-e) = j
-        end if
-      end do
-    end if
 
     gpu%hne = hne
     gpu%srow(1:hne) = hrow(1:hne);  gpu%scol(1:hne) = hcol(1:hne)
     gpu%sfrvar(1:n) = frvar(1:n)
     gpu%has_pattern = .true.
-    call system_clock(t3)
-    gpu%t_conv_ms  = real(t2 - t1, 8) / real(rate, 8) * 1d3
-    gpu%t_build_ms = real(t3 - t0, 8) / real(rate, 8) * 1d3
+    call system_clock(t1)
+    gpu%t_build_ms = real(t1 - t0, 8) / real(rate, 8) * 1d3
   end subroutine build_pattern
 
   ! *****************************************************************
@@ -229,8 +236,8 @@ contains
     call hipCheck(hipFree(gpu%d_x))
     call hipCheck(hipFree(gpu%d_y))
     call hipsparseCheck(hipsparseDestroy(gpu%handle))
-    deallocate(gpu%srow, gpu%scol, gpu%sfrvar, gpu%renum, gpu%alen, gpu%wrow, gpu%wcol, &
-               gpu%wid, gpu%row_ptr, gpu%pos1, gpu%pos2)
+    deallocate(gpu%srow, gpu%scol, gpu%sfrvar, gpu%renum, gpu%alen, gpu%col, &
+               gpu%row_ptr, gpu%pos1, gpu%pos2)
     gpu%initialized = .false.;  gpu%active = .false.;  gpu%has_pattern = .false.
   end subroutine lssit_gpu_free
 
@@ -280,71 +287,5 @@ contains
     call hs_free_buffer(gpu%d_buf)
     gpu%spmv_ready = .false.
   end subroutine teardown_spmv
-
-  ! *****************************************************************
-  ! *****************************************************************
-
-  ! Rotina do orientador (docs/coo2csr_orientador.f90), in-place, O(nnz).
-  ! Adaptacao: o vetor de valores (aval, real) virou aid, inteiro, que carrega
-  ! a origem de cada entrada; o resto do codigo executavel e o original.
-  ! Na saida asta(i) = inicio da linha i (base 1), alen(i) = tamanho da linha i;
-  ! a ordem das colunas dentro de cada linha nao e garantida (nao precisa).
-  subroutine coo2csr(m,nnz,arow,acol,aid,alen,asta)
-
-    implicit none
-
-    ! SCALAR ARGUMENTS
-    integer, intent(in) :: m,nnz
-
-    ! ARRAY ARGUMENTS
-    integer, intent(inout) :: acol(nnz),alen(m),arow(nnz),asta(m)
-    integer, intent(inout) :: aid(nnz)
-
-    ! LOCAL SCALARS
-    integer :: i,j,col,coltmp,row,rowtmp
-    integer :: id,idtmp
-
-    alen(1:m) = 0
-
-    do i = 1,nnz
-       row = arow(i)
-       alen(row) = alen(row) + 1
-    end do
-
-    asta(1) = 1
-    do i = 2,m
-       asta(i) = asta(i-1) + alen(i-1)
-    end do
-
-    do i = 1,nnz
-
-       id  = aid(i)
-       col = acol(i)
-       row = arow(i)
-
-       arow(i) = - 1
-
-       do while ( row .ge. 0 )
-          j = asta(row)
-          asta(row) = j + 1
-
-          idtmp  = aid(j)
-          coltmp = acol(j)
-          rowtmp = arow(j)
-
-          aid(j)  = id
-          acol(j) = col
-          arow(j) = - 1
-
-          id  = idtmp
-          col = coltmp
-          row = rowtmp
-       end do
-
-    end do
-
-    asta(1:m) = asta(1:m) - alen(1:m)
-
-  end subroutine coo2csr
 
 end module lssit_gpu_mod

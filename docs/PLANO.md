@@ -179,6 +179,8 @@ cutestma_gpu : sources/cutestma_gpu.f90 + ${DECODED_SRCS} + ${CUTEST_LIB}  (liga
     - Resultado: 1,7 ms por passo, contra 55 ms da versão com a compactação e 1,05 ms da fase 5.
     - Toda a memória da GPU é alocada uma vez.
     - Em aberto: `coo2csr` in-place × contagem na troca de face (46 contra 14 ms), e comparação completa da estrutura (+0,65 ms/passo). Ver `docs/FASE6.md` §4.0.
+    - Decidido em 22/11: contagem fora do lugar, como os dois primeiros laços do `coo2csr`, mas sem a permutação por ciclos. A face nova custa 16 ms (fase 5: 14). A versão com o `coo2csr` está no branch `fase6-coo2csr`.
+    - A comparação completa da estrutura fica, por segurança (~0,6 ms por passo, limitada pela banda de memória). Será reavaliada com o perfil do Gencan real.
 
 ---
 

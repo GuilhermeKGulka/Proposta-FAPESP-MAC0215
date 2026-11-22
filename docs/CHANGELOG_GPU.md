@@ -40,7 +40,7 @@ Resultados de referência (os da fase 6 serão comparados com eles):
 ## Estado atual
 
 - **`lssit.f90`:** o tipo ganha `usegpu` (padrão `.true.`) e `gpu`, e `lssitend` libera a GPU. No modo GPU, o `preparehv` chama `lssit_gpu_prepare` **no lugar** da compactação na CPU. Tudo sob `#ifdef GENCAN_GPU`, e o resto do arquivo é idêntico à referência.
-- **`lssit_gpu.f90` (novo):** Hessiana da face na GPU. Quando o padrão muda: espelho + `coo2csr` do orientador (carregando a origem de cada entrada) + `pos1/pos2`. A cada passo: envio dos `hne` valores + scatter. Faz também o SpMV.
+- **`lssit_gpu.f90` (novo):** Hessiana da face na GPU. Quando o padrão muda, monta o CSR com o espelho por contagem por linha, como os dois primeiros laços do `coo2csr` do orientador, mas com colocação fora do lugar, e grava `pos1/pos2`. A cada passo: envio dos `hne` valores + scatter. Faz também o SpMV.
 - **Caminho da fase 5:** `hess_csr`, `cgm_gpu` e `gencan_gpu` continuam em uso pelo `cutestma_gpu` até os passos 4–5.
 - **Build:**
   - a GPU é opcional (`GENCAN_GPU` AUTO/ON/OFF), assim como o CUTEst;
@@ -132,3 +132,23 @@ Resultados de referência (os da fase 6 serão comparados com eles):
   - SpMV igual nos dois (0,065 ms) e com o mesmo resultado (diferença 2e-16).
   - Os 0,65 ms a mais por passo são a comparação da estrutura do COO. A fase 5 só comparava `hne` e a face.
   - Na face nova, o `coo2csr` in-place (permutação por ciclos, com acesso aleatório a três vetores) é cerca de 3× mais lento que a contagem fora do lugar da fase 5. Decisão em aberto no `docs/FASE6.md` §4.0.
+
+### 2026-11-22 — montagem do CSR por contagem fora do lugar (fase 6, passo 3, opção b)
+- **Arquivo/rotina:** `sources/lssit_gpu.f90` (`build_pattern`, `lssit_gpu_prepare`), `tests/test_hess_csr.f90`.
+- **O que mudou:**
+  - O `build_pattern` não chama mais a permutação in-place por ciclos do `coo2csr`. Ele mantém os dois primeiros laços do `coo2csr`: contar as entradas de cada linha (já com o espelho) e acumular o início de cada linha. Depois coloca cada entrada e seu espelho fora do lugar, com um cursor por linha (`alen`), e grava `pos1/pos2` no mesmo laço.
+  - Saem os vetores de trabalho `wrow`/`wid` e a rotina `coo2csr` do módulo.
+  - A comparação da estrutura no `lssit_gpu_prepare` virou um laço único com saída na primeira diferença.
+- **Por quê:**
+  - Decisão (b) do usuário, em 22/11/2026: na troca de face, o `coo2csr` in-place custava 32 ms dos 46 ms.
+  - A versão com o `coo2csr` está guardada no branch `fase6-coo2csr` (commit `3e6c3a7`), para poder voltar.
+  - A rotina original do orientador continua em `docs/coo2csr_orientador.f90`.
+- **Validação (22/11/2026):** `test_hess_csr` parte A 6/6, erro ≤ 1.8e-16. O `y` do SpMV agora é idêntico ao da fase 5 (diferença 0), porque a ordem das entradas no CSR passou a ser a mesma.
+- **Medição (`n = 300000`, `nnz = 1,39 M`):**
+
+  | Caminho (ms) | Mesmo padrão | Face nova (`build_pattern`) |
+  |---|---|---|
+  | fase 6 (b) | 1,65 | 16,4 (13,7) |
+  | fase 5 | 1,05 | 14,3 |
+
+  - Os ~0,6 ms a mais por passo são a leitura da estrutura do COO na comparação: cerca de 19 MB, limitada pela banda de memória. O laço com saída antecipada não mudou isso.
