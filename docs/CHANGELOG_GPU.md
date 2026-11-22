@@ -200,3 +200,10 @@ Resultados de referência (os da fase 6 serão comparados com eles):
   - testes sintéticos 6/6 e 9/9;
   - build `cpu` idêntico à referência.
 - **Pendente:** NVIDIA **[NÃO VERIFICADO]**.
+
+### 2026-11-22 — NVIDIA: build e testes sintéticos
+- **Arquivo/rotina:** nenhum código mudou. Documentado o `CMAKE_PREFIX_PATH` da máquina NVIDIA no README e no CLAUDE.md.
+- **Validação:**
+  - RTX 5070 Ti, gfortran 13.3: build completo com `--preset nvidia`;
+  - `test_hess_csr` 6/6 e `test_cgm_gpu` 9/9, o que confirma que o cuSPARSE aceita colunas fora de ordem na linha do CSR;
+  - CUTEst ainda a rodar.

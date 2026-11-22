@@ -59,6 +59,12 @@ Opções do CMake:
 - **`HIP_PLATFORM=amd|nvidia`:** o backend.
 - **`KERNEL_FLAGS`:** flags extras do `hipcc`, por exemplo `-DKERNEL_FLAGS="--offload-arch=gfx1201"`.
 - **Se algo não for encontrado:** `-DHIPFORT_ROOT=...` (ou `-DHIPFORT_MOD_DIR`/`-DHIPFORT_LIB`) e `-DCUDAToolkit_ROOT=...`.
+- **NVIDIA:** o hipfort `nvptx` e o hipSPARSE/hipBLAS compilados para CUDA costumam ficar fora do `/opt/rocm`. Informe os prefixos pela variável de ambiente, **separados por `:`** (`;` só vale com `-D`). Na máquina de testes (RTX 5070 Ti):
+  ```bash
+  export CMAKE_PREFIX_PATH="$HOME/hip-nv:$HOME/hipfort"
+  cmake --preset nvidia && cmake --build --preset nvidia
+  ```
+  Não passe `--offload-arch` em `KERNEL_FLAGS` no NVIDIA: essa sintaxe é de AMD.
 - **`PROBLEM=<NOME>`:** o problema CUTEst. Ele é decodificado quando o CMake configura, então trocar de problema exige reconfigurar.
 
 Executáveis (a versão `_gpu` só existe com a GPU ligada):
@@ -101,5 +107,8 @@ O `run-cutest-gpu.sh` limita cada execução a 600 s de CPU (`ulimit -St`). Para
   - testes sintéticos OK;
   - build `cpu` idêntico à referência;
   - CUTEst `pequena.txt` com resultado idêntico ao da fase 5, que já tinha sido validada contra a CPU.
-- **NVIDIA:** o build com CUDA ainda não foi testado com o código atual.
+- **NVIDIA (RTX 5070 Ti, gfortran 13.3):**
+  - build OK e testes sintéticos 6/6 e 9/9 (22/11/2026);
+  - o cuSPARSE aceita colunas fora de ordem dentro da linha do CSR;
+  - CUTEst ainda a rodar.
 - **Fora do escopo por enquanto:** `truehp = .false.` (quocientes incrementais) e restrições gerais (Algencan). Nesses casos o Gencan usa o caminho da CPU.

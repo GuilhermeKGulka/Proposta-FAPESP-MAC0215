@@ -58,6 +58,9 @@ cmake --preset cpu && cmake --build --preset cpu && ./build/cpu/toyprob_cpu
   - `GENCAN_GPU=AUTO|ON|OFF`: o padrão sem preset é `AUTO`; os presets `amd`/`nvidia` usam `ON` e o preset `cpu` usa `OFF`.
   - Sem `env_cutest.sh`, os alvos `cutestma_*` não são criados.
   - Toda mudança no CMake precisa ser conferida nos dois backends (ROCm e CUDA). Nesta máquina não há CUDA: teste o nvidia pelo menos em AUTO/ON (fallback/erro) e registre o build CUDA real como **[NÃO VERIFICADO]** até rodar na máquina NVIDIA.
+  - **Máquina NVIDIA** (RTX 5070 Ti, gfortran 13.3, usuário roda por lá):
+    - antes do `cmake --preset nvidia`, rodar `export CMAKE_PREFIX_PATH="$HOME/hip-nv:$HOME/hipfort"`. Na variável de ambiente o separador é `:`, não `;`;
+    - não passar `--offload-arch` no `KERNEL_FLAGS`.
 
 - **O problema CUTEst é fixado quando o CMake configura.** `-DPROBLEM=X` roda o `sifdecoder` e gera `ELFUN.f GROUP.f RANGE.f [EXTER.f]` em `build/<preset>/`. Para trocar de problema é preciso reconfigurar.
 - `run-cutest-gpu.sh` pula os problemas listados em `done_gencan.txt` (apague a linha para repetir um problema). Os logs ficam em `build/<preset>/logs/<PROBLEMA>.log`, e é lá que aparece o motivo quando o script diz "falhou compilar". `pequena.txt` tem 7 problemas e `problems.txt` tem 475.

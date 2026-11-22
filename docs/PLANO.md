@@ -238,7 +238,11 @@ Controle: rodei o `cgm` da **CPU** com os produtos internos somados em ordem rev
 - **Build `cpu`:** `compare-cpu-ref.sh` dá 0 diferenças contra a referência.
 - **CUTEst `pequena.txt`, `precond = .true.`:** CPU e GPU com **todos os campos idênticos aos da fase 5**, fora o tempo, inclusive o BQPGAUSS (118). Tabelas em `resultados/table_{cpu,gpu}_fase6_pre.txt`.
 - **CUTEst `pequena.txt`, `precond = .false.`** (passo 7; o `cutestma.f90` foi alterado só durante a rodada e depois restaurado): também idênticos à fase 5 em todos os campos, com o BQPGAUSS em 97/90 como na fase 5. Tabelas em `resultados/table_{cpu,gpu}_fase6_nopre.txt`.
-- **Pendente para fechar a fase 6:** build e `pequena.txt` no NVIDIA **[NÃO VERIFICADO]**.
+- **NVIDIA (RTX 5070 Ti, gfortran 13.3, 22/11/2026):** build OK (`CMAKE_PREFIX_PATH="$HOME/hip-nv:$HOME/hipfort"`).
+  - `test_hess_csr` 6/6 (erro ≤ 2e-16) e `test_cgm_gpu` 9/9 (`d` com erro ≤ 1,7e-15).
+  - Isso confirma que o cuSPARSE aceita colunas fora de ordem dentro da linha do CSR.
+  - SpMV com `nnz = 1,39 M`: 0,039 ms, contra 0,065 ms no AMD.
+- **Pendente para fechar a fase 6:** `pequena.txt` no NVIDIA.
 - **Padrões novos por chamada de `preparehv`:** 1 nos problemas sem caixa. Nos com caixa, quase todo passo: BQPGAUSS 109/111, TORSION1 23/23, OBSTCLAE 21/21.
 
 **Fase 6, medição (c): 18 problemas com caixa e `n ≥ 10000` (`grandes_bound.txt`, 22/11/2026).**
