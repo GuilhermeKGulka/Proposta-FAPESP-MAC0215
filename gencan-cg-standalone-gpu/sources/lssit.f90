@@ -60,7 +60,7 @@ contains
     type(lssit_type), intent(out) :: lssit
 
     ! LOCAL SCALARS
-    integer :: allocerr,hcap
+    integer :: allocerr
 
     lssit%n  = n
     lssit%m  = m
@@ -72,12 +72,7 @@ contains
 
     lssit%evalg => evalg 
 
-    hcap = hnnzmax
-#ifdef GENCAN_GPU
-    if ( lssit%usegpu ) hcap = 2 * hnnzmax   ! espaco para o espelho do triangulo (lssit_gpu_prepare)
-#endif
-
-    allocate(lssit%hrow(hcap),lssit%hcol(hcap),lssit%hval(hcap),&
+    allocate(lssit%hrow(hnnzmax),lssit%hcol(hnnzmax),lssit%hval(hnnzmax),&
              lssit%jsta(m+p),lssit%jlen(m+p),lssit%jvar(jnnzmax),&
              lssit%jval(jnnzmax),lssit%constrin(m+p),lssit%s(n),&
              lssit%y(n),lssit%pdiag(n),lssit%psmdy(n),lssit%hds(n),stat=allocerr)
@@ -136,6 +131,18 @@ contains
     ! LOCAL ARRAYS
     integer :: renumbered(n)
 
+#ifdef GENCAN_GPU
+    ! Modo GPU: a Hessiana da face vai para a GPU (CSR) direto do COO do evalh,
+    ! sem a compactacao abaixo, que so serve ao produto H v da CPU (adaptacao de
+    ! desempenho, ver docs/CHANGELOG_GPU.md). O COO do lssit fica intacto.
+    lssit%gpu%active = .false.
+    if ( lssit%usegpu .and. lssit%truehp .and. lssit%compressed ) then
+      call lssit_gpu_prepare(lssit%gpu,n,lssit%hnnzmax,frvar,lssit%hne, &
+                             lssit%hrow,lssit%hcol,lssit%hval)
+      return
+    end if
+#endif
+
     if ( n .ne. nfr) then
       renumbered(1:n) = unpack( (/ (i,i=1,nfr) /), frvar(1:n), 0 )
 
@@ -183,16 +190,6 @@ contains
           end do
       end if
     end if
-
-#ifdef GENCAN_GPU
-    ! COO da face (ja compactado acima) -> CSR na GPU. Depois disso hrow/hcol/hval
-    ! deixam de ser COO: o produto H v da face passa a ser feito so na GPU.
-    lssit%gpu%active = .false.
-    if ( lssit%usegpu .and. lssit%truehp .and. lssit%compressed ) then
-      call lssit_gpu_prepare(lssit%gpu,n,size(lssit%hrow),nfr,lssit%hne, &
-                             lssit%hrow,lssit%hcol,lssit%hval)
-    end if
-#endif
 
   end subroutine preparehv
 

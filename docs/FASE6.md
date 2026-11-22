@@ -89,7 +89,7 @@ A escolha final, com os números, vai para o changelog e para o PLANO §5.
 
 A causa é estrutural: a fase 5 nunca compactava o COO na CPU. Ela guardava, uma vez por padrão, a posição de cada entrada do COO original no CSR (`pos1/pos2`), e depois só enviava `hne` valores e espalhava na GPU.
 
-**Proposta (iv) [ABERTO: aguardando aprovação]:** no modo GPU, o `preparehv` faz o ramo GPU **no lugar** da compactação na CPU, partindo do COO original do `evalh`:
+**Proposta (iv) [aprovada e implementada em 22/11/2026; números no changelog]:** no modo GPU, o `preparehv` faz o ramo GPU **no lugar** da compactação na CPU, partindo do COO original do `evalh`:
 - **Detectar mudança de padrão:** comparar `hne`, `hrow/hcol` e `frvar` com a última montagem. É O(hne) em inteiros e vale para qualquer `evalh`.
 - **Montar o padrão (só quando ele muda), em vetores de trabalho do `lssit%gpu`:**
   - renumerar e filtrar pela face (mesma regra do `preparehv`) e espelhar;
@@ -101,6 +101,24 @@ A causa é estrutural: a fase 5 nunca compactava o COO na CPU. Ela guardava, uma
   - A capacidade do `lssit` volta a `hnnzmax`, e o espaço do espelho fica nos vetores de trabalho.
   - O custo esperado por passo é o da fase 5 mais a comparação da estrutura.
 - **Analogia:** continua no nível da rotina, porque o `preparehv` segue "preparando a Hessiana da face para os produtos H v". O que muda é que, no modo GPU, ele não executa a compactação da CPU. Essa é uma adaptação de desempenho justificada pelos números acima.
+
+**Resultado da (iv)** (`n = 300000`, `nnz = 1,39 M`):
+
+| | Mesmo padrão | Face nova |
+|---|---|---|
+| Fase 6 (iv) | 1,7 ms | 46 ms (`coo2csr` 32 ms) |
+| Fase 5 | 1,05 ms | 14 ms |
+
+Questões em aberto:
+- **[ABERTO] Face nova: `coo2csr` in-place × contagem fora do lugar.**
+  - A permutação por ciclos do `coo2csr` faz acessos aleatórios a três vetores (linha, coluna, origem) e fica cerca de 3× mais lenta que a contagem da fase 5.
+  - A vantagem dele, não usar memória extra, não se aplica aqui: os vetores de trabalho já existem, porque o COO do `lssit` não é destruído.
+  - Opções:
+    - (a) manter o `coo2csr` do orientador, como pedido, e aceitar o custo na troca de face;
+    - (b) usar a contagem fora do lugar, que é a mesma ideia do `coo2csr` (contar por linha e acumular) sem o passo in-place;
+    - (c) medir no Gencan real quantas trocas de face acontecem antes de decidir.
+  - O peso disso depende de quantas vezes a face muda: nunca em `genunc`, e com frequência nas primeiras iterações de problemas com caixa.
+- **[ABERTO] Comparação da estrutura do COO a cada passo (0,65 ms).** Ela garante a correção para qualquer `evalh`. A fase 5 assumia, como no CUTEst, que a estrutura é fixa e só comparava `hne` e a face. Dá para manter a comparação completa, como está, ou adotar a hipótese da fase 5 e documentá-la.
 
 ### 4.1 Opções discutidas (proposta de 21/11/2026)
 

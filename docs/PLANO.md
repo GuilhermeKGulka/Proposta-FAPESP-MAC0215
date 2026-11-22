@@ -174,6 +174,11 @@ cutestma_gpu : sources/cutestma_gpu.f90 + ${DECODED_SRCS} + ${CUTEST_LIB}  (liga
     - estado da GPU no `lssit_type`;
     - CSR montado por espelhamento + `coo2csr` do orientador dentro do `preparehv`, a medir contra o scatter;
     - trabalho no branch `fase6`.
+12. Fase 6, D4 medido (22/11/2026):
+    - No modo GPU, o `preparehv` **não faz a compactação da CPU**. Ele parte do COO original, monta o padrão (espelho + `coo2csr` com a origem de cada entrada → `pos1/pos2`) só quando a estrutura ou a face mudam, e a cada passo envia os valores e espalha por kernel.
+    - Resultado: 1,7 ms por passo, contra 55 ms da versão com a compactação e 1,05 ms da fase 5.
+    - Toda a memória da GPU é alocada uma vez.
+    - Em aberto: `coo2csr` in-place × contagem na troca de face (46 contra 14 ms), e comparação completa da estrutura (+0,65 ms/passo). Ver `docs/FASE6.md` §4.0.
 
 ---
 

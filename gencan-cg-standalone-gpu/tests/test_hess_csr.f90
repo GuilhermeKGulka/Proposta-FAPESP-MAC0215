@@ -128,6 +128,7 @@ contains
   ! ===================================================================
   subroutine parte_b()
     integer, parameter :: n = 300000, noff = 900000, hnnzmax = n + noff, nrep = 20, nspmv = 50
+    integer, parameter :: kface = 11          ! passo em que a face muda
     integer, allocatable :: hrow(:), hcol(:)
     real(8), allocatable, target :: hval(:), v(:)
     logical, allocatable :: frvar(:)
@@ -158,6 +159,10 @@ contains
 
     do k = 1, nrep
       call random_number(hval(1:hne))          ! "evalh": mesma estrutura, valores novos
+      if (k == kface) then                     ! face nova sem custo de alocacao (padrao refeito)
+        frvar(1) = .not. frvar(1)
+        nfr = count(frvar)
+      end if
 
       ! fase 6: preparehv com GPU (a copia para o lssit faz o papel do evalh, fora do tempo)
       lsg%compressed = .true.;  lsg%hne = hne
@@ -166,6 +171,10 @@ contains
       call preparehv(n, nfr, frvar, lsg)
       call hipCheck(hipDeviceSynchronize())
       call system_clock(c1);  t_new(k) = real(c1 - c0, 8) / real(rate, 8) * 1d3
+      if (k == kface) then
+        write(*,'(A,F9.3,A,F9.3,A,F9.3,A)') '  fase 6, face nova: build_pattern ', lsg%gpu%t_build_ms, &
+              ' ms (coo2csr ', lsg%gpu%t_conv_ms, ' ms), SpMV_preprocess ', lsg%gpu%t_prep_ms, ' ms'
+      end if
 
       ! referencia: preparehv so CPU (o que o Gencan original ja paga)
       lsc%compressed = .true.;  lsc%hne = hne
@@ -179,6 +188,7 @@ contains
       call hess_csr_update(h, hne, hrow, hcol, hval, frvar, changed)
       call hipCheck(hipDeviceSynchronize())
       call system_clock(c1);  t_old(k) = real(c1 - c0, 8) / real(rate, 8) * 1d3
+      if (k == kface) write(*,'(A,F9.3,A)') '  fase 5, face nova: SpMV_preprocess ', h%t_prep_ms, ' ms'
     end do
 
     ! SpMV: mesmo vetor nos dois CSR (ordens de coluna diferentes)
@@ -200,10 +210,12 @@ contains
     d = diff_y(lsg%gpu%d_y, d_y, nfr)
 
     write(*,'(A,I0,A,I0,A,I0)') 'nfr = ', nfr, '   nnz fase 6 = ', lsg%gpu%nnz, '   nnz fase 5 = ', h%nnz
-    write(*,'(A)') '                               1o passo (padrao novo)   media passos 2..20 (ms)'
-    write(*,'(A,F12.3,F14.3)') '  fase 6: preparehv + GPU   ', t_new(1), sum(t_new(2:)) / (nrep - 1)
-    write(*,'(A,F12.3,F14.3)') '  preparehv so CPU          ', t_cpu(1), sum(t_cpu(2:)) / (nrep - 1)
-    write(*,'(A,F12.3,F14.3)') '  fase 5: hess_csr_update   ', t_old(1), sum(t_old(2:)) / (nrep - 1)
+    write(*,'(A)') '(ms)                         1o passo    face nova    mesmo padrao (media)'
+    write(*,'(A)') '                             (c/ init)   (passo 11)   (demais passos)'
+    write(*,'(A,3F13.3)') '  fase 6: preparehv + GPU ', t_new(1), t_new(kface), media_passos(t_new, kface)
+    write(*,'(A,3F13.3)') '  preparehv so CPU        ', t_cpu(1), t_cpu(kface), media_passos(t_cpu, kface)
+    write(*,'(A,3F13.3)') '  fase 5: hess_csr_update ', t_old(1), t_old(kface), media_passos(t_old, kface)
+    write(*,'(A)') '  (fase 5: alocacoes no hess_csr_init, fora da medicao; fase 6: na 1a chamada)'
     write(*,'(A,F10.4,A,F10.4,A,ES9.2)') '  SpMV (ms): fase 6 ', s_new, '   fase 5 ', s_old, &
           '   max|y6 - y5|/max|y5| = ', d
 
@@ -211,6 +223,13 @@ contains
     call hipCheck(hipFree(d_x));  call hipCheck(hipFree(d_y))
     call lssitend(lsg);  call lssitend(lsc)
   end subroutine parte_b
+
+  ! media sem o 1o passo e sem o passo da face nova
+  real(8) function media_passos(t, kface)
+    real(8), intent(in) :: t(:)
+    integer, intent(in) :: kface
+    media_passos = (sum(t) - t(1) - t(kface)) / (size(t) - 2)
+  end function media_passos
 
   real(8) function diff_y(da, db, m)
     type(c_ptr), intent(in) :: da, db

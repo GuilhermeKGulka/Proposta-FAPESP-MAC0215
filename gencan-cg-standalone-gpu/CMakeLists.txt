@@ -174,7 +174,7 @@ if(GPU_ENABLED)
   target_compile_definitions(gencan_gpu6 PRIVATE GENCAN_GPU)
   set_target_properties(gencan_gpu6 PROPERTIES Fortran_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/mod/gpu6)
   target_include_directories(gencan_gpu6 PUBLIC ${CMAKE_BINARY_DIR}/mod/gpu6)
-  target_link_libraries(gencan_gpu6 PUBLIC hsgen hipfort_backend)
+  target_link_libraries(gencan_gpu6 PUBLIC hsgen kernels hipfort_backend)   # kernels: scatter
 
   # caminho da fase 5 (sai nos passos 4-5): hess_csr nao usa lssit; cgm_gpu usa o da CPU
   add_library(hesscsr STATIC sources/hess_csr.f90)

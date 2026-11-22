@@ -39,8 +39,8 @@ Resultados de referência (os da fase 6 serão comparados com eles):
 
 ## Estado atual
 
-- **`lssit.f90`:** o tipo ganha `usegpu` (padrão `.true.`) e `gpu`. `lssitini` dobra a capacidade da Hessiana, `lssitend` libera a GPU e o `preparehv`, no fim, chama `lssit_gpu_prepare`. Tudo sob `#ifdef GENCAN_GPU`.
-- **`lssit_gpu.f90` (novo):** Hessiana da face na GPU (espelho + `coo2csr` do orientador + envio + SpMV).
+- **`lssit.f90`:** o tipo ganha `usegpu` (padrão `.true.`) e `gpu`, e `lssitend` libera a GPU. No modo GPU, o `preparehv` chama `lssit_gpu_prepare` **no lugar** da compactação na CPU. Tudo sob `#ifdef GENCAN_GPU`, e o resto do arquivo é idêntico à referência.
+- **`lssit_gpu.f90` (novo):** Hessiana da face na GPU. Quando o padrão muda: espelho + `coo2csr` do orientador (carregando a origem de cada entrada) + `pos1/pos2`. A cada passo: envio dos `hne` valores + scatter. Faz também o SpMV.
 - **Caminho da fase 5:** `hess_csr`, `cgm_gpu` e `gencan_gpu` continuam em uso pelo `cutestma_gpu` até os passos 4–5.
 - **Build:**
   - a GPU é opcional (`GENCAN_GPU` AUTO/ON/OFF), assim como o CUTEst;
@@ -103,3 +103,32 @@ Resultados de referência (os da fase 6 serão comparados com eles):
 
   O SpMV custa 0,066 ms (fase 6) e 0,061 ms (fase 5). Os dois CSR dão o mesmo `y` (diferença 4e-16).
   - Conclusão: esta versão é cerca de 50× mais cara por passo de Newton do que a fase 5. A compactação do `preparehv` original sozinha já custa 24 ms, e a fase 5 a evitava. Melhoria proposta no `docs/FASE6.md` §4.0.
+
+### 2026-11-22 — `preparehv` no modo GPU parte do COO original (fase 6, passo 3, versão iv)
+- **Arquivo/rotina:** `sources/lssit.f90` (`lssitini`, `preparehv`), `sources/lssit_gpu.f90`, `tests/test_hess_csr.f90`, `CMakeLists.txt`, `compare-cpu-ref.sh` (novo).
+- **O que mudou (em relação a `gencan-cg-standalone/`):**
+  - `preparehv`: o bloco `#ifdef GENCAN_GPU` foi para o **início**. No modo GPU (`usegpu .and. truehp .and. compressed`), ele chama `lssit_gpu_prepare` e retorna, sem executar a compactação do COO, que só serve ao `computehv` da CPU.
+  - O COO do `lssit` não é mais alterado.
+  - A capacidade da Hessiana no `lssitini` voltou a `hnnzmax`, como na referência.
+  - `lssit_gpu_prepare`:
+    - compara a estrutura do COO (`hne`, `hrow`, `hcol`) e a face com as da última montagem;
+    - se mudou, `build_pattern` renumera e filtra pela face (regra do `preparehv`), espelha cada entrada fora da diagonal logo depois dela (a ordem dentro da linha do CSR não importa) e chama o `coo2csr` do orientador;
+    - a adaptação do `coo2csr`: o vetor de valores reais virou um vetor inteiro com a origem de cada entrada (`+e` direta, `−e` espelhada). O resto do código executável é o original. Daí saem `pos1/pos2`, a posição no CSR de cada entrada do COO original;
+    - a cada passo: envia os `hne` valores e espalha com `launch_scatter` (kernel da fase 5).
+  - Toda a memória de host e device é alocada uma vez, na primeira chamada, com a capacidade máxima `(n, hnnzmax)`. Quando o padrão muda, só o descritor e o buffer do SpMV são refeitos.
+- **Por quê:** a versão (i) custava 55 ms por passo, contra 1 ms da fase 5 (entrada anterior).
+- **Validação (22/11/2026, RX 9070 XT):**
+  - `test_hess_csr` parte A: 6/6, erro relativo ≤ 1.6e-16;
+  - `test_cgm_gpu`: 9/9;
+  - `compare-cpu-ref.sh` (build `cpu` contra a referência, `toyprob` + `pequena.txt`): 0 diferenças.
+- **Medição (`test_hess_csr` parte B, `n = 300000`, `nnz = 1,39 M`, face de 80%):**
+
+  | Caminho (ms) | mesmo padrão (por passo) | face nova |
+  |---|---|---|
+  | fase 6 (iv) | **1,7** | 46 (`build_pattern` 44, dos quais **`coo2csr` 32**; preprocess 1,3) |
+  | fase 5 | 1,05 | 14 (preprocess 1,3) |
+  | `preparehv` só CPU | 23,6 | 24 |
+
+  - SpMV igual nos dois (0,065 ms) e com o mesmo resultado (diferença 2e-16).
+  - Os 0,65 ms a mais por passo são a comparação da estrutura do COO. A fase 5 só comparava `hne` e a face.
+  - Na face nova, o `coo2csr` in-place (permutação por ciclos, com acesso aleatório a três vetores) é cerca de 3× mais lento que a contagem fora do lugar da fase 5. Decisão em aberto no `docs/FASE6.md` §4.0.

@@ -91,7 +91,7 @@ Armadilhas que já custaram tempo:
 - Antes de editar, proponha o plano da tarefa e espere aprovação.
 - Uma tarefa por vez, com commits pequenos e mensagens claras em português.
 - Nunca altere a versão CPU de referência sem pedir: `gencan-cg-standalone/` inteiro.
-- Desde a fase 6, `lssit.f90`, `cgm.f90` e `gencan.f90` em `gencan-cg-standalone-gpu/sources/` recebem a GPU **só sob `#ifdef GENCAN_GPU`**, em blocos curtos. Sem a macro, o comportamento tem que ser o da referência. Depois de cada mudança nesses arquivos, compare a saída do build `cpu` (`toyprob_cpu` e `cutestma_cpu` na `pequena.txt`) com a referência compilada pelos scripts dela: tem que ser idêntica, fora a linha de tempo.
+- Desde a fase 6, `lssit.f90`, `cgm.f90` e `gencan.f90` em `gencan-cg-standalone-gpu/sources/` recebem a GPU **só sob `#ifdef GENCAN_GPU`**, em blocos curtos. Sem a macro, o comportamento tem que ser o da referência. Depois de cada mudança nesses arquivos, rode `./compare-cpu-ref.sh`, que compara a saída do build `cpu` (`toyprob_cpu` e `cutestma_cpu` na `pequena.txt`) com a referência compilada pelos scripts dela. Tem que dar 0 diferenças; só a linha de tempo é ignorada.
 - Toda rotina ou kernel novo precisa ser testado contra o código CPU original antes de entrar no Gencan.
 - Toda mudança numérica deve ser comparada com a CPU usando o mesmo `precond` dos dois lados. Critério da proposta (§6.3): `iter` idêntico, e `f`, gradiente e multiplicadores dentro de 1e-6. Critério do PLANO: `iter`, `fcnt`, `gcnt`, `hcnt` e `cginfo` idênticos. Se um problema bem condicionado divergir, trate como bug.
 - Mudanças de desempenho: meça antes e depois com tempo de parede.
