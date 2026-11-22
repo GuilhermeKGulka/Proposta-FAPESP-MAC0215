@@ -90,7 +90,7 @@ Fase 6 (branch `fase6`): um só código. A GPU entra por analogia, em três pont
   - `gencan_gpu` = os mesmos fontes com `-DGENCAN_GPU`, mais `lssit_gpu`/`cgm_gpu`;
   - `cutestma_{cpu,gpu}` e `toyprob_{cpu,gpu}` saem do mesmo fonte;
   - os testes comparam `usegpu = .false.` contra a GPU no mesmo executável.
-- **Fora do build, aguardando remoção:** `gencan_gpu.f90`, `cutestma_gpu.f90`, `cutest_iface.f90`, `gencan_gpu_context.f90`. O `hess_csr.f90` só serve à comparação de tempos do `test_hess_csr`.
+- **Removidos em 22/11/2026:** `gencan_gpu.f90`, `cutestma_gpu.f90`, `cutest_iface.f90`, `gencan_gpu_context.f90` (estão no histórico). O `hess_csr.f90` só serve à comparação de tempos do `test_hess_csr`.
 
 Armadilhas que já custaram tempo:
 - Fortran não diferencia maiúsculas de minúsculas (`d_d` ≠ `d_dg`, nunca `d_D`).

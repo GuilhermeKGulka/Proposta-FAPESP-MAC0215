@@ -44,7 +44,7 @@ Resultados de referência (os da fase 6 serão comparados com eles):
 - **`cgm.f90`:** desvio para `cgm_gpu` quando a Hessiana da face está na GPU (`#ifdef GENCAN_GPU`).
 - **`cgm_gpu.f90`:** mesma assinatura do `cgm`, sem contexto próprio.
 - **`gencan.f90`, `cutestma.f90`, `toyprob.f90`:** iguais à referência. O executável GPU sai do mesmo fonte, linkado contra a biblioteca `gencan_gpu`.
-- **Fora do build, aguardando confirmação para remover:** `gencan_gpu.f90`, `cutestma_gpu.f90`, `cutest_iface.f90`, `gencan_gpu_context.f90`. O `hess_csr.f90` fica só para a comparação de tempos.
+- **Removidos em 22/11/2026, com confirmação do usuário:** `gencan_gpu.f90`, `cutestma_gpu.f90`, `cutest_iface.f90`, `gencan_gpu_context.f90`. Continuam no histórico e no `main`. O `hess_csr.f90` fica só para a comparação de tempos.
 - **Build:**
   - a GPU é opcional (`GENCAN_GPU` AUTO/ON/OFF), assim como o CUTEst;
   - preset `cpu` para compilar sem HIP;
