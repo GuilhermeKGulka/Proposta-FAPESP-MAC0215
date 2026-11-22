@@ -206,4 +206,5 @@ Resultados de referência (os da fase 6 serão comparados com eles):
 - **Validação:**
   - RTX 5070 Ti, gfortran 13.3: build completo com `--preset nvidia`;
   - `test_hess_csr` 6/6 e `test_cgm_gpu` 9/9, o que confirma que o cuSPARSE aceita colunas fora de ordem na linha do CSR;
-  - CUTEst ainda a rodar.
+  - CUTEst `pequena.txt` (`precond = .true.`): `iter`/`fcnt`/`gcnt`/`hcnt` idênticos entre CPU e GPU nos 6 problemas bem comportados, e `f` concorda em ≥ 1e-13. O BQPGAUSS deu 89 na CPU e 102 na GPU, por arredondamento (no AMD a GPU deu 118). Tabelas em `resultados/table_*_fase6_pre_nvidia.txt`.
+  - **Fase 6 validada nos dois backends.**

@@ -242,7 +242,11 @@ Controle: rodei o `cgm` da **CPU** com os produtos internos somados em ordem rev
   - `test_hess_csr` 6/6 (erro ≤ 2e-16) e `test_cgm_gpu` 9/9 (`d` com erro ≤ 1,7e-15).
   - Isso confirma que o cuSPARSE aceita colunas fora de ordem dentro da linha do CSR.
   - SpMV com `nnz = 1,39 M`: 0,039 ms, contra 0,065 ms no AMD.
-- **Pendente para fechar a fase 6:** `pequena.txt` no NVIDIA.
+- **CUTEst `pequena.txt` no NVIDIA** (`precond = .true.`; tabelas em `resultados/table_{cpu,gpu}_fase6_pre_nvidia.txt`):
+  - Nos 6 problemas bem comportados, `iter`/`fcnt`/`gcnt`/`hcnt` são idênticos entre CPU e GPU, e iguais aos do AMD. O `f` concorda em ≥ 1e-13.
+  - BQPGAUSS: CPU 89 contra GPU 102 (no AMD a GPU deu 118). É o caso sensível a arredondamento (§8.10): a ordem das reduções muda com a placa. Os dois convergem.
+  - O custo fixo da GPU é ~0,45 s, contra 0,12 s no AMD. O BQPGAUSS na GPU levou 5,6 s de `cpu_time`, mas esse número não é confiável: o `cpu_time` conta a espera ativa da CPU pela GPU. Precisa medir em tempo de parede (§7.2).
+- **Fase 6 validada nos dois backends (22/11/2026).**
 - **Padrões novos por chamada de `preparehv`:** 1 nos problemas sem caixa. Nos com caixa, quase todo passo: BQPGAUSS 109/111, TORSION1 23/23, OBSTCLAE 21/21.
 
 **Fase 6, medição (c): 18 problemas com caixa e `n ≥ 10000` (`grandes_bound.txt`, 22/11/2026).**
@@ -306,6 +310,7 @@ Próximos passos da fase 6:
 ### 7.2 Medição justa de desempenho
 
 5. Medir com **tempo de parede** (`system_clock`) em `cutestma_cpu` e `cutestma_gpu`.
+   - **`cpu_time` não serve para a GPU:** no NVIDIA, a espera ativa do runtime do CUDA entra no `cpu_time` (BQPGAUSS: 5,6 s na GPU contra 0,57 s na CPU). Usar tempo de parede nos dois modos.
    - **Limite de tempo por execução:** o `run-cutest-gpu.sh` usa `ulimit -St 600`, que é tempo de CPU. Nos benchmarks de desempenho ele deve ser retirado ou bem maior, porque a vantagem da GPU cresce justamente nos problemas que demoram (observação do usuário, 22/11/2026). A medição (c) da fase 6 ainda rodou com 600 s.
 6. Tirar `cgm_gpu_init` da região medida (contexto criado uma vez, ou medir separadamente), ou reportar "tempo total" e "tempo do laço" separados.
 7. Benchmark com n grande: `test_cgm_gpu` com `n = 300000`, `noff = 900000` (antes/depois da fase 5); problemas CUTEst grandes (ex.: `YATP1CLS`, `YATP2CLS`, `FMINSURF`, `POWER`, `CURLY*`, `NCB20*`, séries `TORSION*`, `OBSTCL*`, `JNLBRNG*`, `DEGTRID*`). Lista completa em `problems.txt`.

@@ -180,7 +180,14 @@ Questões em aberto:
 6. **[FEITO 22/11: código morto e scripts obsoletos removidos; README, CLAUDE.md e PLANO atualizados]** **Limpeza.**
    - Remover o código morto e os scripts obsoletos.
    - Atualizar o `README.md` do diretório, o `CLAUDE.md` e o PLANO.
-7. **[FEITO 22/11 no AMD, exceto o NVIDIA]** Testes sintéticos 6/6 e 9/9. `pequena.txt` idêntica à fase 5 nos dois modos de `precond` (`resultados/table_*_fase6_{pre,nopre}.txt`). Build `cpu` idêntico à referência. **Falta: NVIDIA [NÃO VERIFICADO].** **Validação final.**
+7. **[FEITO 22/11 nos dois backends]** **Validação final.**
+   - **AMD:**
+     - testes sintéticos 6/6 e 9/9;
+     - `pequena.txt` idêntica à fase 5 nos dois modos de `precond` (`resultados/table_*_fase6_{pre,nopre}.txt`);
+     - build `cpu` idêntico à referência.
+   - **NVIDIA (RTX 5070 Ti):**
+     - testes 6/6 e 9/9;
+     - `pequena.txt` com `iter`/`fcnt`/`gcnt`/`hcnt` idênticos aos da CPU nos 6 problemas bem comportados. O BQPGAUSS variou por arredondamento, como previsto no §6 (`resultados/table_*_fase6_pre_nvidia.txt`).
    - Testes sintéticos.
    - `pequena.txt` nos dois modos de `precond`, comparado com `resultados/table_*_fase5_*.txt`.
    - Build com `GENCAN_GPU=OFF`.

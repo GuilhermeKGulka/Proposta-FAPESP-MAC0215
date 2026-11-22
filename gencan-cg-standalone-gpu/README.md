@@ -110,5 +110,5 @@ O `run-cutest-gpu.sh` limita cada execução a 600 s de CPU (`ulimit -St`). Para
 - **NVIDIA (RTX 5070 Ti, gfortran 13.3):**
   - build OK e testes sintéticos 6/6 e 9/9 (22/11/2026);
   - o cuSPARSE aceita colunas fora de ordem dentro da linha do CSR;
-  - CUTEst ainda a rodar.
+  - CUTEst `pequena.txt`: mesmos resultados da CPU nos problemas bem comportados.
 - **Fora do escopo por enquanto:** `truehp = .false.` (quocientes incrementais) e restrições gerais (Algencan). Nesses casos o Gencan usa o caminho da CPU.
